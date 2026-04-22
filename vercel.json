@@ -2,18 +2,22 @@
   "version": 2,
   "builds": [
     {
-      "src": "src/index.ts",
+      "src": "src/vercel-server.ts",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
       "src": "/sse",
-      "dest": "src/index.ts"
+      "dest": "src/vercel-server.ts"
     },
     {
       "src": "/messages",
-      "dest": "src/index.ts"
+      "dest": "src/vercel-server.ts"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "src/vercel-server.ts"
     }
   ]
 }
