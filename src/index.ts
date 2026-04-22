@@ -4,48 +4,52 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
-// Herramientas Existentes (Estructura de archivos)
+// Herramientas Existentes
 import { createTicketSchema, createTicket } from "./tools/create-ticket.js";
 import { getTicketStatusSchema, getTicketStatus } from "./tools/get-ticket-status.js";
 import { prioritizeIncidentSchema, prioritizeIncident } from "./tools/prioritize-incident.js";
 import { suggestSolutionSchema, suggestSolution } from "./tools/suggest-solution.js";
 import { generateReportSchema, generateReport } from "./tools/generate-report.js";
 
-// ─── 1. CONFIGURACIÓN Y CLIENTE SUPABASE (Fixed Schema) ──────────────────────
+// ─── 1. CONFIGURACIÓN Y CLIENTE SUPABASE ─────────────────────────────────────
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-// Cliente centralizado apuntando al esquema 'helpdesk'
-export const supabase: SupabaseClient = createClient(
+// FIX: Usamos 'as any' para evitar que TS bloquee el uso del esquema 'helpdesk'
+export const supabase = createClient(
   SUPABASE_URL, 
   SUPABASE_SERVICE_ROLE_KEY, 
   {
     auth: { persistSession: false, autoRefreshToken: false },
-    db: { schema: 'helpdesk' }, // <-- Fix: Evita colisiones con el esquema 'public'
+    db: { schema: 'helpdesk' as any }, 
   }
 );
 
-// Validar variables de entorno críticas
+// Validar variables de entorno
 const requiredEnv = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'ANTHROPIC_API_KEY'];
 requiredEnv.forEach(env => {
   if (!process.env[env]) {
-    console.error(`\x1b[31m%s\x1b[0m`, `❌ CRITICAL ERROR: Missing environment variable ${env}`);
+    console.error(`❌ CRITICAL ERROR: Missing environment variable ${env}`);
     process.exit(1);
   }
 });
 
 // ─── 2. INICIALIZACIÓN DEL SERVIDOR ──────────────────────────────────────────
 
-const server = new McpServer({
+// FIX: Añadimos 'export' para que vercel-server.ts pueda importarlo
+export const server = new McpServer({
   name: "helpdesk-ai-mcp",
   version: "1.2.1",
 });
 
 // ─── 3. REGISTRO DE HERRAMIENTAS (Core) ───────────────────────────────────────
+
+// NOTA: MCP espera que 'text' sea estrictamente un string.
+// Si tus herramientas devuelven objetos, usamos JSON.stringify().
 
 server.tool(
   "create_ticket",
@@ -53,7 +57,8 @@ server.tool(
   createTicketSchema.shape,
   async (input: any) => {
     const result = await createTicket(input);
-    return { content: [{ type: "text" as const, text: result }] };
+    const textOutput = typeof result === 'string' ? result : JSON.stringify(result);
+    return { content: [{ type: "text" as const, text: textOutput }] };
   }
 );
 
@@ -63,7 +68,8 @@ server.tool(
   getTicketStatusSchema.shape,
   async (input: any) => {
     const result = await getTicketStatus(input);
-    return { content: [{ type: "text" as const, text: result }] };
+    const textOutput = typeof result === 'string' ? result : JSON.stringify(result);
+    return { content: [{ type: "text" as const, text: textOutput }] };
   }
 );
 
@@ -73,7 +79,8 @@ server.tool(
   prioritizeIncidentSchema.shape,
   async (input: any) => {
     const result = await prioritizeIncident(input);
-    return { content: [{ type: "text" as const, text: result }] };
+    const textOutput = typeof result === 'string' ? result : JSON.stringify(result);
+    return { content: [{ type: "text" as const, text: textOutput }] };
   }
 );
 
@@ -83,7 +90,8 @@ server.tool(
   suggestSolutionSchema.shape,
   async (input: any) => {
     const result = await suggestSolution(input);
-    return { content: [{ type: "text" as const, text: result }] };
+    const textOutput = typeof result === 'string' ? result : JSON.stringify(result);
+    return { content: [{ type: "text" as const, text: textOutput }] };
   }
 );
 
@@ -93,15 +101,16 @@ server.tool(
   generateReportSchema.shape,
   async (input: any) => {
     const result = await generateReport(input);
-    return { content: [{ type: "text" as const, text: result }] };
+    const textOutput = typeof result === 'string' ? result : JSON.stringify(result);
+    return { content: [{ type: "text" as const, text: textOutput }] };
   }
 );
 
-// ─── 4. HERRAMIENTAS DE LISTADO Y CONTEO (Inyectadas con Fix) ────────────────
+// ─── 4. HERRAMIENTAS DE LISTADO Y CONTEO ────────────────────────────────────
 
 server.tool(
   "list_tickets",
-  "Lista tickets con filtros (status, priority, category) y paginación",
+  "Lista tickets con filtros y paginación",
   {
     limit: z.number().default(10),
     status: z.string().optional(),
@@ -111,7 +120,7 @@ server.tool(
   async (input) => {
     let query = supabase
       .from("tickets")
-      .select("id, title, status, priority, category, reporter_email, created_at")
+      .select("id, title, status, priority, category, requester_name, created_at")
       .order("created_at", { ascending: false })
       .limit(input.limit || 10);
 
@@ -120,15 +129,15 @@ server.tool(
     if (input.category) query = query.eq("category", input.category);
 
     const { data, error } = await query;
-    if (error) return { content: [{ type: "text", text: `❌ Supabase Error: ${error.message}` }] };
+    if (error) return { content: [{ type: "text" as const, text: `❌ Error: ${error.message}` }] };
     
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
   }
 );
 
 server.tool(
   "count_tickets",
-  "Cuenta tickets totales o agrupados por status/priority/category",
+  "Cuenta tickets totales o agrupados",
   {
     group_by: z.enum(["status", "priority", "category", "none"]).default("none"),
   },
@@ -138,20 +147,20 @@ server.tool(
         .from("tickets")
         .select("*", { count: "exact", head: true });
       
-      if (error) return { content: [{ type: "text", text: `❌ Error: ${error.message}` }] };
-      return { content: [{ type: "text", text: `Total tickets en esquema 'helpdesk': ${count}` }] };
+      if (error) return { content: [{ type: "text" as const, text: `❌ Error: ${error.message}` }] };
+      return { content: [{ type: "text" as const, text: `Total tickets: ${count}` }] };
     }
 
     const { data, error } = await supabase.from("tickets").select(input.group_by);
-    if (error) return { content: [{ type: "text", text: `❌ Error: ${error.message}` }] };
+    if (error) return { content: [{ type: "text" as const, text: `❌ Error: ${error.message}` }] };
 
     const counts = (data || []).reduce((acc: any, item: any) => {
-      const key = item[input.group_by] || "unspecified";
+      const key = item[input.group_by as string] || "unspecified";
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
 
-    return { content: [{ type: "text", text: JSON.stringify(counts, null, 2) }] };
+    return { content: [{ type: "text" as const, text: JSON.stringify(counts, null, 2) }] };
   }
 );
 
@@ -160,10 +169,9 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`\x1b[32m%s\x1b[0m`, "✅ Vidal Ecosystem MCP Server v1.2.1 (helpdesk schema) running");
 }
 
 main().catch((err) => {
-  console.error("❌ Fatal error during server startup:", err);
+  console.error("❌ Fatal error:", err);
   process.exit(1);
 });

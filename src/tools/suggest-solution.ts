@@ -18,7 +18,7 @@ export type SuggestSolutionInput = z.infer<typeof suggestSolutionSchema>;
 // ─── Handler de la Herramienta ───────────────────────────────────────────────
 export async function suggestSolution(args: SuggestSolutionInput) {
   try {
-    // 1. Obtener contexto completo del ticket en 'helpdesk'
+    // 1. Obtener contexto completo del ticket en el esquema 'helpdesk'
     const { data: ticket, error } = await supabase
       .from('tickets')
       .select('*')
@@ -30,22 +30,23 @@ export async function suggestSolution(args: SuggestSolutionInput) {
     }
 
     // 2. Invocar motor de razonamiento (lib/ai.js)
-    // Pasamos el ticket completo para que la IA tenga contexto de categoría y lenguaje
     const sol = await generateSolution(ticket, ticket.language);
 
     // 3. Persistir la solución sugerida en la DB para auditoría
+    // FIX: Se cambia 'args.id' por 'args.ticketId' para coincidir con el esquema
     await supabase
       .from('tickets')
       .update({ ai_solution: sol.solution })
-      .eq('id', args.id);
+      .eq('id', args.ticketId);
 
     // 4. Formateo de Salida Ejecutiva
     const stepsFormatted = sol.steps.map((s: string, i: number) => `${i + 1}. ${s}`).join('\n');
 
+    // Retorno normalizado para el protocolo MCP
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: `💡 **Propuesta de Resolución IA (Confianza: ${sol.confidence.toUpperCase()})**\n` +
                 `--------------------------------------------------\n` +
                 `🎯 **Solución:** ${sol.solution}\n\n` +
@@ -58,7 +59,12 @@ export async function suggestSolution(args: SuggestSolutionInput) {
 
   } catch (e: any) {
     return {
-      content: [{ type: "text", text: `❌ Error al generar la solución: ${e.message}` }]
+      content: [
+        { 
+          type: "text" as const, 
+          text: `❌ Error al generar la solución: ${e.message}` 
+        }
+      ]
     };
   }
 }
