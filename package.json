@@ -1,22 +1,23 @@
 {
-    "name":  "helpdesk-ai-mcp",
-    "version":  "1.0.0",
-    "type":  "module",
-    "scripts":  {
-                    "build":  "tsc",
-                    "start":  "node dist/index.js",
-                    "dev":  "tsx watch src/index.ts"
-                },
-    "dependencies":  {
-                         "@anthropic-ai/sdk":  "^0.20.9",
-                         "@modelcontextprotocol/sdk":  "^1.29.0",
-                         "@supabase/supabase-js":  "^2.104.0",
-                         "dotenv":  "^16.6.1",
-                         "zod":  "^3.25.76"
-                     },
-    "devDependencies":  {
-                            "@types/node":  "^20.19.39",
-                            "tsx":  "^4.21.0",
-                            "typescript":  "^5.9.3"
-                        }
+    "name": "helpdesk-ai-mcp",
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/index.js",
+        "dev": "tsx watch src/index.ts"
+    },
+    "dependencies": {
+        "@anthropic-ai/sdk": "^0.20.9",
+        "@modelcontextprotocol/sdk": "^1.29.0",
+        "@supabase/supabase-js": "^2.104.0",
+        "dotenv": "^16.6.1",
+        "zod": "^3.25.76"
+    },
+    "devDependencies": {
+        "@types/express": "^5.0.6",
+        "@types/node": "^20.19.39",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3"
+    }
 }
