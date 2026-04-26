@@ -1,78 +1,135 @@
-# 🇨🇭 Vidal Helpdesk MCP Server
-> **Enterprise-Grade AI-Powered SaaS Infrastructure for Swiss SMEs**
-> *Model Context Protocol (MCP) implementation for autonomous ticket orchestration, built with Supabase and Anthropic Claude AI under Swiss revDSG standards.*
+# vidal-helpdesk-mcp
 
-![Version](https://img.shields.io/badge/version-1.2.1-0A84FF?style=for-the-badge)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=for-the-badge&logo=typescript)
-![Supabase](https://img.shields.io/badge/Supabase-Isolated_Schema-3ECF8E?style=for-the-badge&logo=supabase)
-![Compliance](https://img.shields.io/badge/Compliance-Swiss_revDSG-DA291C?style=for-the-badge)
-![Architecture](https://img.shields.io/badge/Architecture-Clean_Layers-007ACC?style=for-the-badge)
+> **AI-Powered IT Helpdesk MCP Server v2.0**
+> 100% compatible with [ticket-system](https://github.com/vidal-renao/ticket-system) — same schema, same AI engine, same DB tables.
 
----
-
-## 1. Executive Summary
-
-`vidal-helpdesk` es una infraestructura **AI-Native** de grado de producción diseñada para transformar el soporte técnico en una operación autónoma. Este servidor permite que Claude Desktop actúe como un orquestador de soporte, gestionando el ciclo de vida de los incidentes directamente en lenguaje natural.
-
-Construido para empresas que requieren **soberanía de datos absoluta**, el sistema utiliza transporte `stdio` local y una capa de persistencia en Supabase (preferiblemente regiones suizas como Zúrich), garantizando que el plano de datos permanezca bajo control del operador.
-
-**Valor de Negocio:**
-- **MTTR (Mean Time To Repair):** Reducción drástica mediante triaje automático y sugerencias de resolución instantáneas.
-- **Data Locality:** Cumplimiento nativo con la **Federal Act on Data Protection (revDSG)**.
-- **Conversational BI:** Capacidad de consultar métricas de salud de infraestructura mediante lenguaje natural.
+![Version](https://img.shields.io/badge/version-2.0.0-0A84FF?style=flat-square)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript)
+![MCP SDK](https://img.shields.io/badge/MCP%20SDK-1.0-green?style=flat-square)
+![Claude](https://img.shields.io/badge/Claude-Sonnet%204-purple?style=flat-square)
+![Supabase](https://img.shields.io/badge/Supabase-public%20schema-3ECF8E?style=flat-square&logo=supabase)
+![Compliance](https://img.shields.io/badge/Swiss-revDSG-DA291C?style=flat-square)
 
 ---
 
-## 2. System Architecture
+## What changed in v2.0
 
-El servidor implementa un patrón de **Clean Architecture**, aislando el protocolo de transporte de la lógica de negocio y la capa de datos.
+| Field | v1 (old) | v2 (current) |
+|-------|----------|--------------|
+| Schema | `helpdesk` (isolated) | `public` (ticket-system) |
+| Priority | `P1/P2/P3/P4` | `low/medium/high/critical` |
+| AI results | `tickets.ai_summary` | `ai_analysis` table |
+| organization_id | Not included | Required via `MCP_ORGANIZATION_ID` |
+| created_by | Not included | Required via `MCP_AGENT_ID` |
+| Ticket ref | UUID only | `TK-1001` format |
 
-```text
-┌──────────────────────────┐          JSON-RPC          ┌──────────────────────────┐
-│     Claude Desktop       │   ◄────────────────────►   │    Vidal MCP Server      │
-│      (MCP Client)        │           stdio            │      (Node.ts 20)        │
-└──────────────────────────┘                            └────────────┬─────────────┘
-                                                                     │ service_role
-                                                                     ▼
-                                       ┌───────────────────────────────────────────┐
-                                       │         Supabase Postgres Cluster         │
-                                       │   (Isolated Schema: 'helpdesk' + RLS)     │
-                                       └──────────────┬────────────────────┬───────┘
-                                                      │                    │
-                                       ┌──────────────┴──────┐      ┌──────┴───────┐
-                                       │  Anthropic API      │      │  Audit Log   │
-                                       │  (Triage & NLU)     │      │  (Traceable) │
-                                       └─────────────────────┘      └──────────────┘
+---
 
-                                       
+## Tools (7)
 
+| Tool | Description |
+|------|-------------|
+| `create_ticket` | AI triage → saves to `tickets` + `ai_analysis` table |
+| `get_ticket_status` | Get ticket by `TK-XXXX` or UUID with AI analysis |
+| `list_tickets` | List tickets with status/priority filters |
+| `prioritize_incident` | Re-run triage with new context, upsert `ai_analysis` |
+| `suggest_solution` | Step-by-step solution in DE/EN/ES/FR/IT, saved as internal comment |
+| `update_ticket_status` | Change status + optional internal comment |
+| `generate_report` | Real Supabase report: SLA compliance, priorities, avg resolution |
 
-                                       3. Tool Inventory (Enterprise v1.2.1)ToolCapabilityAccessLogiccreate_ticketAI-Driven TriageWriteClasificación P1-P4 + SLA Calculation.list_ticketsContext AwarenessReadFiltrado avanzado sobre esquema aislado.get_ticket_statusSLA MonitoringReadEvaluación de Breaches en tiempo real.prioritize_incidentRecursive ReasoningWriteAjuste dinámico de criticidad según contexto.suggest_solutionResolution EngineReadSugerencias multilingües (ES/DE/EN).count_ticketsOperational BIReadAgregación de datos y analítica de carga.generate_reportExecutive AuditReadHealth Score de infraestructura y métricas SLA.
+---
 
+## Setup
 
-                                       4. Engineering Battle — Real Deployment Lessons (Windows)
-Documentación de fricciones técnicas resueltas durante el despliegue en entornos Windows 11:
+```bash
+npm install
+cp .env.example .env
+# fill in .env
+npm run build
+npm start
+```
 
-4.1 Claude Sandbox (Microsoft Store)
-La versión MSIX corre en un AppContainer. La configuración debe residir en:
-%LOCALAPPDATA%\Packages\Anthropic.ClaudeForWindows_...\LocalCache\Roaming\Claude\claude_desktop_config.json
+### Get your IDs from Supabase SQL Editor
 
-4.2 JSON Path Escaping
-Los paths en el config deben usar doble backslash (\\) o forward slash (/) según RFC 8259 para evitar errores de parseo:
-"args": ["C:/Users/Vidal/Projects/vidal-helpdesk/dist/index.js"]
+```sql
+-- MCP_ORGANIZATION_ID
+SELECT id FROM organizations WHERE slug = 'vidal-lab';
 
-4.3 Gestión de Procesos Huérfanos
-Al cerrar la ventana, Claude permanece en el tray y mantiene el proceso node vivo. Para aplicar cambios de código, es imperativo matar el proceso manualmente:
-Stop-Process -Name "node" -Force
+-- MCP_AGENT_ID
+SELECT id FROM profiles WHERE role = 'admin';
+```
 
-5. Compliance Notes (revDSG / Swiss)
-Data Residency: Todo el contenido reside en Supabase. Se recomienda la región eu-central-2 (Zúrich).
+---
 
-AI Disclosure: Las herramientas de IA deben declararse en el aviso de privacidad como "procesamiento automatizado mediante Anthropic".
+## Connect to Claude Desktop
 
-Audit Trail: Las columnas created_at / updated_at junto con el ai_summary garantizan la trazabilidad exigida por el principio de transparencia.
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
-6. License & Contact
-Proprietary — © 2026 Vidal Reñao Lopelo.
-Fullstack Developer | AI-Powered SaaS Infrastructure Specialist
-Basel, Switzerland · vidal-pro-portfolio.vercel.app
+```json
+{
+  "mcpServers": {
+    "vidal-helpdesk": {
+      "command": "node",
+      "args": ["C:/path/to/vidal-helpdesk-mcp/dist/index.js"],
+      "env": {
+        "SUPABASE_URL": "https://your-project.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "your-service-role-key",
+        "ANTHROPIC_API_KEY": "sk-ant-your-key",
+        "MCP_ORGANIZATION_ID": "your-org-uuid",
+        "MCP_AGENT_ID": "ee677b39-906f-4027-a01c-69024c8c23f5"
+      }
+    }
+  }
+}
+```
+
+> **Windows:** After code changes kill orphaned process: `Stop-Process -Name "node" -Force`
+
+---
+
+## Test without Claude Desktop
+
+```bash
+npm run build
+npx @modelcontextprotocol/inspector node dist/index.js
+# Open http://localhost:5173
+```
+
+---
+
+## Architecture
+Claude Desktop (MCP Client)
+│ stdio / JSON-RPC
+▼
+vidal-helpdesk-mcp (Node.js)
+│ service_role key (bypasses RLS)
+▼
+Supabase PostgreSQL — public schema
+├── tickets           (main table)
+├── ai_analysis       (AI triage results — UNIQUE per ticket)
+├── ticket_comments   (internal notes from MCP)
+├── categories        (Networking, Hardware, Software...)
+├── organizations     (multi-tenant isolation)
+└── audit_logs        (immutable — revDSG Art.6)
+│
+▼
+Anthropic API (Claude Sonnet 4)
+└── Same triage engine as ticket-system/lib/ai/triage.ts
+
+---
+
+## Compliance (Swiss revDSG)
+
+- **Data Residency:** Supabase `eu-central-2` (Zurich) recommended
+- **PII Detection:** Claude flags `contains_pii` on every triage
+- **Audit Trail:** `audit_logs` immutable via INSERT-only RULE
+- **AI Disclosure:** Declare as "automatisierte Verarbeitung durch Anthropic"
+
+---
+
+## Author
+
+**Vidal Reñao Lopelo** — IT Infrastructure & AI Solutions Engineer
+Basel, Switzerland 🇨🇭
+[vidal-pro-portfolio.vercel.app](https://vidal-pro-portfolio.vercel.app)

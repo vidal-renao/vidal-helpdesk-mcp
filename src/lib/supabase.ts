@@ -1,31 +1,29 @@
-﻿import { createClient } from "@supabase/supabase-js";
-import dotenv from "dotenv";
+// src/lib/supabase.ts
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-dotenv.config();
+let client: SupabaseClient | null = null;
 
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-  throw new Error("❌ Error de Infraestructura: Faltan variables de entorno en el .env");
+export function getSupabaseClient(): SupabaseClient {
+  if (client) return client;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  return client;
 }
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-/**
- * Cliente centralizado para el ecosistema Helpdesk.
- * Definimos el esquema 'helpdesk' como el esquema por defecto para evitar errores de tipado.
- */
-export const supabase = createClient(
-  SUPABASE_URL, 
-  SUPABASE_SERVICE_ROLE_KEY, 
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-    // Al usar 'as any' o definir el esquema aquí, TypeScript 
-    // entiende que el esquema de base no es 'public'.
-    db: {
-      schema: 'helpdesk' as any, 
-    },
-  }
-);
+export async function resolveCategoryId(
+  supabase: SupabaseClient,
+  organizationId: string,
+  categoryName: string
+): Promise<string | null> {
+  const slug = categoryName.toLowerCase();
+  const { data } = await supabase
+    .from("categories")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("slug", slug)
+    .eq("is_active", true)
+    .single();
+  return data?.id ?? null;
+}

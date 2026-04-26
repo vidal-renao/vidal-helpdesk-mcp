@@ -7,17 +7,9 @@
     }
   ],
   "routes": [
-    {
-      "src": "/sse",
-      "dest": "src/vercel-server.ts"
-    },
-    {
-      "src": "/messages",
-      "dest": "src/vercel-server.ts"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "src/vercel-server.ts"
-    }
+    { "src": "/sse", "dest": "src/vercel-server.ts" },
+    { "src": "/messages", "dest": "src/vercel-server.ts" },
+    { "src": "/health", "dest": "src/vercel-server.ts" },
+    { "src": "/", "dest": "src/vercel-server.ts" }
   ]
 }
