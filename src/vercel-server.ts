@@ -72,6 +72,9 @@ function createMcpServer() {
 const sessions = new Map<string, SSEServerTransport>();
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
+  console.log(">>> [AUDIT] Petición recibida en el servidor");
+  console.log(">>> [AUDIT] Header Auth:", req.headers.authorization ? "Presente" : "Faltante");
+
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
   // CORS headers
@@ -101,8 +104,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
-          success: false,
           error: error instanceof Error ? error.message : "Unknown audit error",
+          stack: error instanceof Error ? error.stack : null,
         })
       );
       return;
@@ -167,7 +170,12 @@ async function buildAuditCronPayload() {
   const organizationId = process.env.MCP_ORGANIZATION_ID!;
   const activeStatuses = ["open", "in_progress", "pending_customer", "pending_third_party"];
 
-  const [{ count: totalTickets }, { count: compliantTickets }, { count: vipBreaches }, { data: organization }] =
+  const [
+    { count: totalTickets, error: totalTicketsError },
+    { count: compliantTickets, error: compliantTicketsError },
+    { count: vipBreaches, error: vipBreachesError },
+    { data: organization, error: organizationError },
+  ] =
     await Promise.all([
       supabase
         .from("tickets")
@@ -192,6 +200,22 @@ async function buildAuditCronPayload() {
         .eq("id", organizationId)
         .maybeSingle(),
     ]);
+
+  if (totalTicketsError) {
+    throw new Error(`Supabase total tickets query failed: ${totalTicketsError.message}`);
+  }
+
+  if (compliantTicketsError) {
+    throw new Error(`Supabase compliant tickets query failed: ${compliantTicketsError.message}`);
+  }
+
+  if (vipBreachesError) {
+    throw new Error(`Supabase VIP breaches query failed: ${vipBreachesError.message}`);
+  }
+
+  if (organizationError) {
+    throw new Error(`Supabase organization query failed: ${organizationError.message}`);
+  }
 
   const total = totalTickets ?? 0;
   const compliant = compliantTickets ?? 0;
