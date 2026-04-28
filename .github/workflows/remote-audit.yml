@@ -11,6 +11,7 @@ jobs:
     steps:
       - name: Trigger Audit
         run: |
-          curl -X POST "${{ secrets.VIDAL_MCP_AUDIT_URL }}" \
+          curl --fail --show-error --silent -X POST "${{ secrets.VIDAL_MCP_AUDIT_URL }}" \
             -H "Authorization: Bearer ${{ secrets.VIDAL_MCP_AUDIT_SECRET }}" \
-            -H "Content-Type: application/json"
+            -H "Content-Type: application/json" \
+            -d "{}"
