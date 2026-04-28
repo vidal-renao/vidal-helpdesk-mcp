@@ -1,0 +1,16 @@
+name: Remote Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Audit
+        run: |
+          curl -X POST "${{ secrets.VIDAL_MCP_AUDIT_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.VIDAL_MCP_AUDIT_SECRET }}" \
+            -H "Content-Type: application/json"
