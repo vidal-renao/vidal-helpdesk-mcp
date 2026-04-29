@@ -2,14 +2,19 @@
   "version": 2,
   "builds": [
     {
+      "src": "api/cron/audit.ts",
+      "use": "@vercel/node"
+    },
+    {
       "src": "src/vercel-server.ts",
       "use": "@vercel/node"
     }
   ],
   "routes": [
-    { "src": "/sse", "dest": "src/vercel-server.ts" },
-    { "src": "/messages", "dest": "src/vercel-server.ts" },
-    { "src": "/health", "dest": "src/vercel-server.ts" },
-    { "src": "/", "dest": "src/vercel-server.ts" }
+    { "src": "^/api/cron/audit$", "dest": "/api/cron/audit.ts" },
+    { "src": "^/sse$", "dest": "/src/vercel-server.ts" },
+    { "src": "^/messages$", "dest": "/src/vercel-server.ts" },
+    { "src": "^/health$", "dest": "/src/vercel-server.ts" },
+    { "src": "^/$", "dest": "/src/vercel-server.ts" }
   ]
 }
