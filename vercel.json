@@ -1,8 +1,11 @@
 {
-  "functions": {
-    "api/cron/audit.ts": {
-      "memory": 1024,
-      "maxDuration": 10
-    }
-  }
+  "version": 2,
+  "builds": [
+    { "src": "api/cron/audit.ts", "use": "@vercel/node" },
+    { "src": "src/vercel-server.ts", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/cron/audit", "dest": "api/cron/audit.ts" },
+    { "src": "/(.*)", "dest": "src/vercel-server.ts" }
+  ]
 }
