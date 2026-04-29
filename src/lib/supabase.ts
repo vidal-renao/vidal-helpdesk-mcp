@@ -1,14 +1,20 @@
 // src/lib/supabase.ts
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-let client: SupabaseClient | null = null;
+type AnySchemaSupabaseClient = SupabaseClient<any, any, any>;
 
-export function getSupabaseClient(): SupabaseClient {
+let client: AnySchemaSupabaseClient | null = null;
+export const SUPABASE_SCHEMA = process.env.SUPABASE_SCHEMA?.trim() || "helpdesk";
+
+export function getSupabaseClient(): AnySchemaSupabaseClient {
   if (client) return client;
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
-  client = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  client = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    db: { schema: SUPABASE_SCHEMA },
+  });
   return client;
 }
 

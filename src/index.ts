@@ -1,6 +1,6 @@
 // src/index.ts
 // HelpdeskAI MCP Server — 100% compatible with ticket-system schema
-// public schema · priority: low/medium/high/critical · ai_analysis table
+// isolated helpdesk schema · priority: low/medium/high/critical · ai_analysis table
 // Vidal Reñao · Basel, Switzerland 🇨🇭 · vidal-pro-portfolio.vercel.app
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

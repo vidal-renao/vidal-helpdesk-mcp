@@ -11,6 +11,10 @@
 
 AI-powered helpdesk control plane for the VIDAL ecosystem. Exposes `ticket-system` through 7 MCP tools via HTTP/SSE, runs an autonomous SLA audit engine on Vercel, and drives hourly compliance reporting through GitHub Actions CI/CD.
 
+## Business Value
+
+`vidal-helpdesk-mcp` acts as an **AI-Powered SLA Auditor** for the Swiss market. It gives Swiss SMEs and MSPs an operational audit layer that watches SLA drift, flags VIP risk, and generates compliance-ready evidence without requiring a human analyst for every reporting cycle.
+
 ---
 
 ## Live Demo
@@ -73,7 +77,7 @@ Two end-to-end demos recorded against real production data — no mocks, no stag
 
 ### 1 · Backend — Supabase PostgreSQL
 
-The data layer. All ticket reads, SLA compliance queries, and write-backs hit Supabase directly through a service-role client (`src/lib/supabase.ts`). Active statuses tracked: `open`, `in_progress`, `pending_customer`, `pending_third_party`.
+The data layer. All ticket reads, SLA compliance queries, and write-backs hit Supabase directly through a service-role client (`src/lib/supabase.ts`) pinned to the isolated `helpdesk` schema by default. Active statuses tracked: `open`, `in_progress`, `pending_customer`, `pending_third_party`.
 
 ### 2 · MCP Bridge — Vercel SSE Server
 
@@ -186,6 +190,21 @@ The codebase supports two execution modes:
 
 ---
 
+## Architecture Table
+
+| Layer | Path | Purpose |
+|---|---|---|
+| Core | `src/index.ts` | StdIO MCP entrypoint for local and desktop clients |
+| Core | `src/vercel-server.ts` | HTTP/SSE MCP server for Vercel deployment |
+| Core | `src/lib/` | Shared clients, orchestration adapters, audit logging, and schema capability helpers |
+| Tools | `src/tools/` | Business tools for SLA audit, triage, reporting, prioritization, and ticket updates |
+| Database | `src/lib/supabase.ts` | Centralized Supabase service-role client pinned to the isolated schema |
+| Database | `docs/sql/` | SQL assets and database hardening references |
+| Delivery | `api/cron/audit.ts` | Scheduled audit endpoint that computes and sends SLA reports |
+| Delivery | `.github/workflows/` | Recurring automation for compliance and audit execution |
+
+---
+
 ## Vercel Routing
 
 Defined in `vercel.json`:
@@ -206,6 +225,7 @@ Required for the remote audit path:
 ```bash
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_SCHEMA=helpdesk
 MCP_ORGANIZATION_ID=
 AUDIT_CRON_SECRET=
 RESEND_API_KEY=
