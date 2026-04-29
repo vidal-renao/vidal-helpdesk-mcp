@@ -27,3 +27,5 @@ export const getAuditEmailHtml = (stats: {
   </div>
 </div>
 `;
+
+export const auditTemplate = getAuditEmailHtml;

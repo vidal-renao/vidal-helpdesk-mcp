@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { Resend } from "resend";
 
-import { getAuditEmailHtml } from "../../src/lib/audit-template";
-import { getSupabaseClient } from "../../src/lib/supabase";
+import { auditTemplate } from "../../src/lib/audit-template.js";
+import { getSupabaseClient } from "../../src/lib/supabase.js";
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   console.log(">>> [AUDIT] Petición recibida en el servidor");
@@ -106,7 +106,7 @@ async function buildAuditCronPayload() {
   const compliant = compliantTickets ?? 0;
   const vip = vipBreaches ?? 0;
   const compliance = total > 0 ? Number(((compliant / total) * 100).toFixed(2)) : 100;
-  const html = getAuditEmailHtml({
+  const html = auditTemplate({
     compliance,
     totalTickets: total,
     vipBreaches: vip,
