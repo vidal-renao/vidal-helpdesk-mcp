@@ -46,6 +46,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
 async function buildAuditCronPayload() {
   const supabase = getSupabaseClient();
+  const publicSchema = supabase.schema("public");
   const organizationId = process.env.MCP_ORGANIZATION_ID;
 
   if (!organizationId) {
@@ -60,24 +61,24 @@ async function buildAuditCronPayload() {
     { count: vipBreaches, error: vipBreachesError },
     { data: organization, error: organizationError },
   ] = await Promise.all([
-    supabase
+    publicSchema
       .from("tickets")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organizationId)
       .in("status", activeStatuses),
-    supabase
+    publicSchema
       .from("tickets")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organizationId)
       .in("status", activeStatuses)
       .eq("sla_breached", false),
-    supabase
+    publicSchema
       .from("tickets")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organizationId)
       .in("status", activeStatuses)
       .in("priority", ["high", "critical"]),
-    supabase
+    publicSchema
       .from("organizations")
       .select("name, slug")
       .eq("id", organizationId)
