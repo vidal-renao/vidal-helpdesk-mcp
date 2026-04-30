@@ -190,6 +190,25 @@ The codebase supports two execution modes:
 
 ---
 
+## Infrastructure
+
+The infrastructure layer is schema-segregated to satisfy Swiss DSG expectations around isolation, least privilege, and auditability. The SLA audit runtime is pinned to `helpdesk`, while shared platform primitives stay in `public`.
+
+### Schema Segregation
+
+| Schema | Scope | Objects / Examples | Security Posture |
+|---|---|---|---|
+| `public` | Shared platform primitives only | Supabase-managed metadata, extensions, shared non-helpdesk objects | No audit pipeline writes. Avoid tenant-sensitive helpdesk records here. |
+| `helpdesk` | Application and audit data plane | `tickets`, `ticket_comments`, `organizations`, `categories`, `ai_analysis`, `audit_runs` | Default runtime schema in `src/lib/supabase.ts`, RLS-aligned, isolated for Swiss DSG compliance. |
+
+### Version History
+
+| Version | Summary |
+|---|---|
+| `v1.2.2` | Successful migration to the `helpdesk` schema, implementation of `audit-runs.ts`, and hardening of security validations for the audit endpoint. |
+
+---
+
 ## Architecture Table
 
 | Layer | Path | Purpose |

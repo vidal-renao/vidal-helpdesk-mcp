@@ -6,9 +6,6 @@ import { auditTemplate } from "../../src/lib/audit-template.js";
 import { getSupabaseClient, SUPABASE_SCHEMA } from "../../src/lib/supabase.js";
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
-  console.log(">>> [AUDIT] Petición recibida en el servidor");
-  console.log(">>> [AUDIT] Header Auth:", req.headers.authorization ? "Presente" : "Faltante");
-
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -119,7 +116,7 @@ async function buildAuditCronPayload() {
   });
 
   const recipient = "htcpacoxo31@gmail.com".trim().toLowerCase();
-  const subject = `🚨 Vidal Audit: ${compliance}% SLA Compliance - ${new Date().toLocaleDateString()}`;
+  const subject = `Vidal Audit: ${compliance}% SLA Compliance - ${new Date().toLocaleDateString()}`;
   const from = process.env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
 
   let emailSent = false;
@@ -134,9 +131,6 @@ async function buildAuditCronPayload() {
     }
 
     const resend = new Resend(resendApiKey);
-
-    console.log(`Intentando enviar auditoría a: ${recipient} desde: ${from}`);
-
     const { data, error } = await resend.emails.send({
       from,
       to: recipient,
@@ -192,9 +186,7 @@ async function buildAuditCronPayload() {
   if (auditRunError) {
     const auditRunMeta = formatSupabaseError(auditRunError);
     console.error(">>> [AUDIT] Supabase audit_runs insert failed:", auditRunMeta);
-    throw new Error(
-      `Supabase audit_runs insert failed: ${auditRunMeta?.message ?? "unknown error"}`
-    );
+    throw new Error(`Supabase audit_runs insert failed: ${auditRunMeta?.message ?? "unknown error"}`);
   }
 
   return {
