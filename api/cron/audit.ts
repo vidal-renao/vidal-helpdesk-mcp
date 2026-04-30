@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "http";
 import { Resend } from "resend";
 
+import { auditRunsTable, buildAuditFingerprint, formatSupabaseError } from "../../src/lib/audit-runs.js";
 import { auditTemplate } from "../../src/lib/audit-template.js";
-import { getSupabaseClient } from "../../src/lib/supabase.js";
+import { getSupabaseClient, SUPABASE_SCHEMA } from "../../src/lib/supabase.js";
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   console.log(">>> [AUDIT] Petición recibida en el servidor");
@@ -87,24 +88,29 @@ async function buildAuditCronPayload() {
   ]);
 
   if (totalTicketsError) {
+    console.error(">>> [AUDIT] Supabase total tickets query failed:", formatSupabaseError(totalTicketsError));
     throw new Error(`Supabase total tickets query failed: ${totalTicketsError.message}`);
   }
 
   if (compliantTicketsError) {
+    console.error(">>> [AUDIT] Supabase compliant tickets query failed:", formatSupabaseError(compliantTicketsError));
     throw new Error(`Supabase compliant tickets query failed: ${compliantTicketsError.message}`);
   }
 
   if (vipBreachesError) {
+    console.error(">>> [AUDIT] Supabase VIP breaches query failed:", formatSupabaseError(vipBreachesError));
     throw new Error(`Supabase VIP breaches query failed: ${vipBreachesError.message}`);
   }
 
   if (organizationError) {
+    console.error(">>> [AUDIT] Supabase organization query failed:", formatSupabaseError(organizationError));
     throw new Error(`Supabase organization query failed: ${organizationError.message}`);
   }
 
   const total = totalTickets ?? 0;
   const compliant = compliantTickets ?? 0;
   const vip = vipBreaches ?? 0;
+  const findingsCount = Math.max(total - compliant, 0);
   const compliance = total > 0 ? Number(((compliant / total) * 100).toFixed(2)) : 100;
   const html = auditTemplate({
     compliance,
@@ -153,6 +159,44 @@ async function buildAuditCronPayload() {
     console.error("Detalle error Resend:", error);
   }
 
+  const overallSeverity = vip > 0 ? "critical" : compliance < 100 ? "warning" : "info";
+  const payload = {
+    compliance,
+    totalTickets: total,
+    compliantTickets: compliant,
+    vipBreaches: vip,
+    recipient,
+    emailSent,
+    emailError,
+    organizationName: organization?.name ?? null,
+    organizationSlug: organization?.slug ?? null,
+  };
+  const fingerprint = buildAuditFingerprint([
+    organizationId,
+    compliance,
+    total,
+    compliant,
+    vip,
+    emailSent,
+    emailError ?? "ok",
+  ]);
+
+  const { error: auditRunError } = await auditRunsTable().insert({
+    organization_id: organizationId,
+    fingerprint,
+    overall_severity: overallSeverity,
+    findings_count: findingsCount,
+    payload,
+  });
+
+  if (auditRunError) {
+    const auditRunMeta = formatSupabaseError(auditRunError);
+    console.error(">>> [AUDIT] Supabase audit_runs insert failed:", auditRunMeta);
+    throw new Error(
+      `Supabase audit_runs insert failed: ${auditRunMeta?.message ?? "unknown error"}`
+    );
+  }
+
   return {
     success: true,
     generatedAt: new Date().toISOString(),
@@ -164,6 +208,13 @@ async function buildAuditCronPayload() {
       compliance,
       totalTickets: total,
       vipBreaches: vip,
+    },
+    auditRun: {
+      schema: SUPABASE_SCHEMA,
+      fingerprint,
+      overallSeverity,
+      findingsCount,
+      persisted: true,
     },
     html,
     emailSent,
