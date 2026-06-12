@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 const mocks = vi.hoisted(() => ({
   getSupabaseClient: vi.fn(),
   auditRunsInsert: vi.fn(),
+  findRecentAuditRun: vi.fn(),
   resendSend: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock("../src/lib/audit-runs.js", () => ({
   }),
   buildAuditFingerprint: (parts: Array<string | number | boolean | null | undefined>) =>
     parts.map((part) => (part == null ? "null" : String(part).trim())).join("|"),
+  findRecentAuditRun: mocks.findRecentAuditRun,
   formatSupabaseError: (error: { message?: string; code?: string; details?: string; hint?: string } | null | undefined) =>
     error
       ? {
@@ -207,6 +209,7 @@ describe("api/cron/audit", () => {
     delete process.env.AUDIT_CRON_SECRET;
 
     mocks.auditRunsInsert.mockResolvedValue({ error: null });
+    mocks.findRecentAuditRun.mockResolvedValue({ data: null, error: null });
     mocks.resendSend.mockResolvedValue({ data: { id: "email-123" }, error: null });
     mockSupabaseAuditData();
   });
@@ -324,6 +327,20 @@ describe("api/cron/audit", () => {
       persisted: false,
       error: "Could not find the table 'public.audit_runs' in the schema cache",
     });
+  });
+
+  it("skips email for a recent duplicate audit fingerprint", async () => {
+    mocks.findRecentAuditRun.mockResolvedValue({
+      data: { id: "audit-run-1", created_at: new Date().toISOString() },
+      error: null,
+    });
+
+    const { res, json } = await callAudit("POST");
+
+    expect(res.statusCode).toBe(200);
+    expect(json.emailSent).toBe(false);
+    expect(json.emailSkippedReason).toBe("duplicate_recent_audit");
+    expect(mocks.resendSend).not.toHaveBeenCalled();
   });
 
   it("returns 500 with a controlled error body when required environment is missing", async () => {

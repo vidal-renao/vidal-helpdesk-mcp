@@ -82,6 +82,8 @@ MCP_AGENT_ID=your-agent-uuid
 ANTHROPIC_API_KEY=sk-ant-your-key
 
 AUDIT_CRON_SECRET=your-audit-cron-secret
+AUDIT_EMAIL_ENABLED=true
+AUDIT_EMAIL_DEDUPE_MINUTES=120
 RESEND_API_KEY=re_your_key
 RESEND_FROM_EMAIL=helpdesk@example.com
 
@@ -164,6 +166,35 @@ Runtime responsibilities:
 - Send audit email via Resend.
 - Persist audit run evidence.
 - Emit structured logs.
+
+## Audit Health Endpoint
+
+Endpoint:
+
+```text
+GET /api/health/audit
+```
+
+Required headers:
+
+```http
+Origin: https://your-allowlisted-origin.example
+Authorization: Bearer <AUDIT_CRON_SECRET>
+```
+
+This endpoint checks runtime configuration and Supabase connectivity without sending emails.
+
+```json
+{
+  "status": "ok",
+  "supabase": "ok",
+  "resend": "configured",
+  "schema": "public",
+  "organizationId": "set",
+  "emailEnabled": true,
+  "dedupeMinutes": 120
+}
+```
 
 ## Structured Logging
 

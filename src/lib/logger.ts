@@ -8,6 +8,9 @@ export type LogFields = {
   supabaseErrorCode: string | null;
   resendErrorCode: string | null;
   message: string;
+  durationMs?: number;
+  emailSent?: boolean;
+  auditRunPersisted?: boolean;
 };
 
 export function logInfo(fields: LogFields): void {

@@ -14,6 +14,16 @@ export function auditRunsTable() {
   return getSupabaseClient().schema(SUPABASE_SCHEMA).from("audit_runs");
 }
 
+export async function findRecentAuditRun(fingerprint: string, sinceIso: string) {
+  return auditRunsTable()
+    .select("id, created_at")
+    .eq("fingerprint", fingerprint)
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+}
+
 export function formatSupabaseError(error: PostgrestError | null | undefined) {
   if (!error) return null;
   return {
