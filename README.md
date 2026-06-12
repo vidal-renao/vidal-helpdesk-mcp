@@ -17,7 +17,7 @@ AI-powered helpdesk infrastructure for the VIDAL ecosystem. This repository prov
 The system is designed for Swiss SME expectations around reliability, privacy, and operational evidence:
 
 - Organization-scoped reads and writes.
-- Explicit `helpdesk` and `public` schema boundaries.
+- Explicit runtime schema boundaries through `SUPABASE_SCHEMA`.
 - Service-role access isolated to backend runtimes.
 - Runtime environment validation with Zod.
 - Structured JSON logs suitable for Vercel Log Drains, Datadog, or SIEM ingestion.
@@ -30,7 +30,7 @@ The system is designed for Swiss SME expectations around reliability, privacy, a
 | Deterministic delivery | `npm ci`, strict Vitest, TypeScript build, and CI gates |
 | Zero-trust perimeter | No wildcard CORS; every runtime origin must be allowlisted |
 | Runtime validation | Centralized Zod schema in `src/lib/env.ts` |
-| Data separation | Helpdesk domain data in `helpdesk`; shared organization lookup in `public` |
+| Data separation | Helpdesk domain data in `SUPABASE_SCHEMA`; shared organization lookup in `public` |
 | Observability | One-line JSON logs with request, workflow, HTTP, Supabase, and Resend metadata |
 | Privacy by design | Aggregated SLA reporting and backend-only service-role access |
 | Performance discipline | API-first serverless runtime; companion frontends should be measured with Lighthouse targets of 100 for Performance, Accessibility, Best Practices, and SEO |
@@ -60,7 +60,7 @@ flowchart LR
   API --> CORS[CORS allowlist]
   API --> ENV[Zod env validation]
   API --> SVC[AuditService.run]
-  SVC --> HD[(Supabase helpdesk schema)]
+  SVC --> HD[(Supabase runtime schema)]
   SVC --> PUB[(Supabase public schema)]
   SVC --> RESEND[Resend email]
   SVC --> LOGS[JSON logs]
@@ -73,7 +73,7 @@ Create `.env` locally or configure the same variables in Vercel.
 ```bash
 SUPABASE_URL=https://your-project-id.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SUPABASE_SCHEMA=helpdesk
+SUPABASE_SCHEMA=public
 VIDAL_MCP_AUDIT_URL=https://your-vercel-domain.example/api/cron/audit
 
 MCP_ORGANIZATION_ID=your-organization-uuid
@@ -158,7 +158,7 @@ Runtime responsibilities:
 
 - Validate `Origin` against `ALLOWED_ORIGINS`.
 - Validate runtime environment variables.
-- Query active tickets from the `helpdesk` schema.
+- Query active tickets from `SUPABASE_SCHEMA`.
 - Query shared organization metadata from the `public` schema.
 - Calculate SLA compliance.
 - Send audit email via Resend.

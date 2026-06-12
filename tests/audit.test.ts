@@ -8,8 +8,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/lib/supabase.js", () => ({
-  SUPABASE_SCHEMA: "helpdesk",
+  SUPABASE_SCHEMA: "public",
   getSupabaseClient: mocks.getSupabaseClient,
+  getDomainSchema: () => mocks.getSupabaseClient().schema("public"),
   getHelpdeskSchema: () => mocks.getSupabaseClient().schema("helpdesk"),
   getPublicSchema: () => mocks.getSupabaseClient().schema("public"),
 }));
@@ -147,6 +148,12 @@ function mockSupabaseAuditData({
 
   const publicSchema = {
     from: vi.fn((table: string) => {
+      if (table === "tickets") {
+        const query = ticketQueries.shift();
+        if (!query) throw new Error("Unexpected tickets query");
+        return query;
+      }
+
       if (table === "organizations") {
         return organizationQuery;
       }
@@ -314,7 +321,7 @@ describe("api/cron/audit", () => {
   it("returns 500 with Supabase diagnostic detail when a required query fails", async () => {
     mockSupabaseAuditData({
       totalTicketsError: {
-        message: "relation helpdesk.tickets does not exist",
+        message: "relation public.tickets does not exist",
         code: "42P01",
       },
     });
@@ -322,6 +329,6 @@ describe("api/cron/audit", () => {
     const { res, json } = await callAudit("POST");
 
     expect(res.statusCode).toBe(500);
-    expect(json.error).toBe("Supabase total tickets query failed: relation helpdesk.tickets does not exist");
+    expect(json.error).toBe("Supabase total tickets query failed: relation public.tickets does not exist");
   });
 });

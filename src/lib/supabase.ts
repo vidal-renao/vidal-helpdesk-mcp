@@ -5,7 +5,7 @@ type AnySchemaSupabaseClient = SupabaseClient<any, any, any>;
 type SupabaseSchemaName = "helpdesk" | "public";
 
 let client: AnySchemaSupabaseClient | null = null;
-export const SUPABASE_SCHEMA = process.env.SUPABASE_SCHEMA?.trim() || "helpdesk";
+export const SUPABASE_SCHEMA = process.env.SUPABASE_SCHEMA?.trim() || "public";
 
 export function getSupabaseClient(): AnySchemaSupabaseClient {
   if (client) return client;
@@ -25,6 +25,11 @@ export function getSupabaseSchema(schema: SupabaseSchemaName) {
 
 export function getHelpdeskSchema() {
   return getSupabaseSchema("helpdesk");
+}
+
+export function getDomainSchema() {
+  const schema = SUPABASE_SCHEMA === "public" ? "public" : "helpdesk";
+  return getSupabaseSchema(schema);
 }
 
 export function getPublicSchema() {

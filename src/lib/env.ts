@@ -19,7 +19,7 @@ const envSchema = z.object({
   AUDIT_CRON_SECRET: z.string().optional(),
   MCP_ORGANIZATION_ID: z.string().min(1).optional(),
   RESEND_FROM_EMAIL: z.string().email().optional(),
-  SUPABASE_SCHEMA: z.string().default("helpdesk"),
+  SUPABASE_SCHEMA: z.string().default("public"),
 });
 
 export type RuntimeEnv = z.infer<typeof envSchema>;

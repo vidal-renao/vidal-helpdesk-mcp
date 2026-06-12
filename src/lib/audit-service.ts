@@ -4,7 +4,7 @@ import { auditRunsTable, buildAuditFingerprint, formatSupabaseError } from "./au
 import { auditTemplate } from "./audit-template.js";
 import { getRuntimeEnv } from "./env.js";
 import { logError, logInfo } from "./logger.js";
-import { getHelpdeskSchema, getPublicSchema, SUPABASE_SCHEMA } from "./supabase.js";
+import { getDomainSchema, getPublicSchema, SUPABASE_SCHEMA } from "./supabase.js";
 
 type AuditServiceOptions = {
   requestId: string;
@@ -169,7 +169,7 @@ export class AuditService {
   }
 
   private static async loadAuditMetrics(requestId: string, organizationId: string) {
-    const helpdeskSchema = getHelpdeskSchema();
+    const domainSchema = getDomainSchema();
     const publicSchema = getPublicSchema();
     const activeStatuses = ["open", "in_progress", "pending_customer", "pending_third_party"];
 
@@ -179,18 +179,18 @@ export class AuditService {
       { count: vipBreaches, error: vipBreachesError },
       { data: organization, error: organizationError },
     ] = await Promise.all([
-      helpdeskSchema
+      domainSchema
         .from("tickets")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", organizationId)
         .in("status", activeStatuses),
-      helpdeskSchema
+      domainSchema
         .from("tickets")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", organizationId)
         .in("status", activeStatuses)
         .eq("sla_breached", false),
-      helpdeskSchema
+      domainSchema
         .from("tickets")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", organizationId)
