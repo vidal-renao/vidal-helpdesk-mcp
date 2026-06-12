@@ -33,7 +33,9 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput): Promis
 
   const ticketRef = `TK-${String(ticket.ticket_number).padStart(4, "0")}`;
   const previousStatus = ticket.status;
-  const updatePayload: Record<string, any> = { status: input.status };
+  const updatePayload: { status: UpdateTicketStatusInput["status"]; resolved_at?: string; closed_at?: string } = {
+    status: input.status,
+  };
   if (input.status === "resolved") updatePayload.resolved_at = new Date().toISOString();
   if (input.status === "closed") updatePayload.closed_at = new Date().toISOString();
 

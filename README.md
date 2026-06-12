@@ -1,295 +1,208 @@
-# vidal-helpdesk-mcp
+# VIDAL Helpdesk MCP
 
-[![Composio](https://img.shields.io/badge/Composio-Orchestration-111827?style=flat-square)](https://composio.dev)
-[![Vercel](https://img.shields.io/badge/Vercel-Serverless-000000?style=flat-square&logo=vercel)](https://vercel.com)
-[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Hourly%20Audit-2088FF?style=flat-square&logo=githubactions)](https://github.com/features/actions)
-[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com)
-[![Resend](https://img.shields.io/badge/Resend-SLA%20Reports-111111?style=flat-square)](https://resend.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
-[![MCP](https://img.shields.io/badge/MCP-SSE%20%2B%20stdio-16a34a?style=flat-square)](https://modelcontextprotocol.io)
-[![Swiss DSG](https://img.shields.io/badge/Swiss%20DSG-Compliant-0EA5E9?style=flat-square)](https://www.fedlex.admin.ch)
+[![Next.js](https://img.shields.io/badge/Next.js-Compatible%20SaaS%20Layer-000000?style=flat-square&logo=nextdotjs)](https://nextjs.org)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com)
+[![Vercel](https://img.shields.io/badge/Vercel-Serverless-000000?style=flat-square&logo=vercel)](https://vercel.com)
+[![Vitest](https://img.shields.io/badge/Vitest-Strict%20CI-6E9F18?style=flat-square&logo=vitest)](https://vitest.dev)
+[![Zod](https://img.shields.io/badge/Zod-Runtime%20Validation-3068B7?style=flat-square)](https://zod.dev)
+[![MCP](https://img.shields.io/badge/MCP-HTTP%2FSSE%20%2B%20stdio-16A34A?style=flat-square)](https://modelcontextprotocol.io)
 
-AI-powered helpdesk control plane for the VIDAL ecosystem. Exposes `ticket-system` through 7 MCP tools via HTTP/SSE, runs an autonomous SLA audit engine on Vercel, and drives hourly compliance reporting through GitHub Actions CI/CD.
+AI-powered helpdesk infrastructure for the VIDAL ecosystem. This repository provides a production-oriented MCP server and scheduled audit runtime for Swiss SME support operations, with explicit schema isolation, strict CI, runtime validation, structured logging, and defensive CORS controls.
 
-## Business Value
+## Business Context
 
-`vidal-helpdesk-mcp` acts as an **AI-Powered SLA Auditor** for the Swiss market. It gives Swiss SMEs and MSPs an operational audit layer that watches SLA drift, flags VIP risk, and generates compliance-ready evidence without requiring a human analyst for every reporting cycle.
+`vidal-helpdesk-mcp` acts as an AI-enabled control plane for helpdesk automation. It exposes operational ticket workflows through Model Context Protocol tools, connects to Supabase for the helpdesk data plane, and runs scheduled SLA audits through Vercel and GitHub Actions.
 
----
+The system is designed for Swiss SME expectations around reliability, privacy, and operational evidence:
 
-## Live Demo
+- Organization-scoped reads and writes.
+- Explicit `helpdesk` and `public` schema boundaries.
+- Service-role access isolated to backend runtimes.
+- Runtime environment validation with Zod.
+- Structured JSON logs suitable for Vercel Log Drains, Datadog, or SIEM ingestion.
+- CORS deny-by-default using `ALLOWED_ORIGINS`.
 
-Two end-to-end demos recorded against real production data — no mocks, no staging.
+## Architecture Principles
 
-### Demo 1 · TK-0065 "Error crítico en login (SLA Risk)"
-
-**Input Layer** — Client submits via mobile form (ES), category Software, priority Alta.
-
-![Mobile client form](docs/screenshots/screenshot-01-mobile-form.png)
-
-**AI Classification** — Agent view shows AI Triage at 72% confidence, Active Directory category, SLA on time.
-
-![AI Triage 72% confidence](docs/screenshots/screenshot-03-ai-triage.png)
-
-**Autonomous Audit** — GitHub Actions Remote Audit #8 completes in 8s with zero failures.
-
-![GitHub Actions Remote Audit #8 — Success 8s](docs/screenshots/screenshot-07-github-actions.png)
-
-**Notification Layer** — Branded SLA report delivered via Resend: 100% compliance, 4 tickets, Swiss DSG footer.
-
-![Daily SLA Report email — 100% compliance](docs/screenshots/screenshot-08-email-report.png)
-
----
-
-### Demo 2 · TK-0066 "I can not use my DB Software"
-
-**Input Layer** — Client submits via desktop form (EN), category Software, priority Critical (SLA).
-
-![Desktop client form — Critical SLA](docs/screenshots/screenshot-02-desktop-form.png)
-
-**AI Classification** — 42% confidence · Urgent sentiment · Smart response generated · ~8h resolution estimate.
-
-![AI Triage 42% conf — smart response — ~8h ETA](docs/screenshots/screenshot-03-ai-triage.png)
-
-**Team Communication** — Agent internal note + client reply + admin escalation, all with DE/EN/ES translation.
-
-![Full collaboration thread — Activity 3](docs/screenshots/screenshot-04-collaboration.png)
-
-**Executive Overview** — Real-time dashboard: 5 open tickets, 1 critical, 0 SLA breached, By Category chart.
-
-![Executive Dashboard — 5 tickets, 1 critical](docs/screenshots/screenshot-05-executive-dashboard.png)
-
-**Urgent Queue** — Admin queue detects URGENT / SLA BREACHED — one-click Assign for immediate response.
-
-![Admin urgent queue — SLA breach detection](docs/screenshots/screenshot-06-urgent-queue.png)
-
-**CI/CD Pipeline** — GitHub Actions Remote Audit #9 completes in 10s, fully autonomous.
-
-![GitHub Actions Remote Audit #9 — Success 10s](docs/screenshots/screenshot-07-github-actions.png)
-
-**Notification Layer** — 100% SLA compliance across 5 tickets, 3 VIP risks flagged. Swiss DSG certified footer.
-
-![Daily SLA Report — 100%, 3 VIP risks](docs/screenshots/screenshot-08-email-report.png)
-
----
-
-## Three Pillars
-
-### 1 · Backend — Supabase PostgreSQL
-
-The data layer. All ticket reads, SLA compliance queries, and write-backs hit Supabase directly through a service-role client (`src/lib/supabase.ts`) pinned to the isolated `helpdesk` schema by default. Active statuses tracked: `open`, `in_progress`, `pending_customer`, `pending_third_party`.
-
-### 2 · MCP Bridge — Vercel SSE Server
-
-The tool layer. `src/vercel-server.ts` exposes 7 MCP tools over HTTP/SSE. Any MCP-compatible client (Claude Desktop, remote agent) can connect and operate on tickets programmatically.
-
-| Tool | What it does |
+| Principle | Implementation |
 |---|---|
-| `create_ticket` | Create ticket with AI triage. Returns `TK-XXXX` ref. |
-| `get_ticket_status` | Fetch ticket by ref or UUID. Includes SLA state and AI analysis. |
-| `list_tickets` | List tickets with optional status/priority filters. |
-| `prioritize_incident` | Re-run AI triage with new context. Updates if confidence ≥ 60%. |
-| `suggest_solution` | Generate step-by-step solution in DE/EN/ES/FR/IT. Saves as internal comment. |
-| `update_ticket_status` | Update ticket status with optional comment. |
-| `generate_report` | SLA compliance report for today/week/month. |
+| Deterministic delivery | `npm ci`, strict Vitest, TypeScript build, and CI gates |
+| Zero-trust perimeter | No wildcard CORS; every runtime origin must be allowlisted |
+| Runtime validation | Centralized Zod schema in `src/lib/env.ts` |
+| Data separation | Helpdesk domain data in `helpdesk`; shared organization lookup in `public` |
+| Observability | One-line JSON logs with request, workflow, HTTP, Supabase, and Resend metadata |
+| Privacy by design | Aggregated SLA reporting and backend-only service-role access |
+| Performance discipline | API-first serverless runtime; companion frontends should be measured with Lighthouse targets of 100 for Performance, Accessibility, Best Practices, and SEO |
+| Compliance discipline | DSG/GDPR posture depends on deployment controls, encryption, access policy, retention policy, and processor agreements; this repository provides implementation primitives, not legal certification |
 
-### 3 · Autonomous Audit — GitHub Actions → Vercel → Resend
+## Directory Architecture
 
-The automation layer. A GitHub Actions workflow fires every hour, triggers the Vercel audit function, which queries Supabase, computes SLA compliance, and sends a branded HTML report via Resend — no human intervention required.
+| Layer | Path | Responsibility |
+|---|---|---|
+| Vercel API | `api/cron/audit.ts` | HTTP transport for scheduled audit execution |
+| MCP stdio | `src/index.ts` | Local MCP entrypoint for desktop or agent clients |
+| MCP HTTP/SSE | `src/vercel-server.ts` | Remote MCP transport deployed on Vercel |
+| Business services | `src/lib/audit-service.ts` | SLA metric aggregation, audit persistence, and email delivery |
+| Runtime validation | `src/lib/env.ts` | Zod validation for environment variables |
+| Security boundary | `src/lib/cors.ts` | Dynamic allowlist CORS enforcement |
+| Observability | `src/lib/logger.ts` | Structured JSON logging for Vercel and log drains |
+| Database access | `src/lib/supabase.ts` | Supabase client and explicit schema helpers |
+| MCP tooling | `src/tools/` | Ticket creation, status, prioritization, solution generation, reporting |
+| Tests | `tests/` | Vitest backend coverage with Supabase and Resend mocks |
+| CI/CD | `.github/workflows/` | Strict CI and scheduled audit workflow |
 
----
-
-## Full System Flow
+## Runtime Flow
 
 ```mermaid
 flowchart LR
-    CLIENT["👤 Client\nmobile / desktop form"]
-    TS["🎫 ticket-system\nNext.js 15 + Supabase"]
-    AI["🤖 AI Triage\nclassify · sentiment · ETA"]
-    AGENT["🧑‍💼 Agent\nqueue · notes · replies"]
-    ADMIN["🏢 Admin\ndashboard · SLA alerts"]
-    MCP["⚡ MCP Server\n7 tools via HTTP/SSE"]
-    GHA["⏱ GitHub Actions\nhourly cron"]
-    VF["▲ Vercel\n/api/cron/audit"]
-    SB[("🗄 Supabase\nPostgreSQL")]
-    RS["✉ Resend\nSLA report email"]
-
-    CLIENT -->|submit| TS
-    TS --> AI
-    AI --> AGENT
-    AGENT --> ADMIN
-    TS <-->|read/write| SB
-    MCP <-->|7 tools| SB
-    GHA -->|POST + Bearer| VF
-    VF --> SB
-    VF --> RS
+  GHA[GitHub Actions] -->|POST with Origin and Bearer token| API[Vercel /api/cron/audit]
+  API --> CORS[CORS allowlist]
+  API --> ENV[Zod env validation]
+  API --> SVC[AuditService.run]
+  SVC --> HD[(Supabase helpdesk schema)]
+  SVC --> PUB[(Supabase public schema)]
+  SVC --> RESEND[Resend email]
+  SVC --> LOGS[JSON logs]
 ```
 
----
+## Operational Configuration
 
-## CI/CD Flow
-
-```mermaid
-flowchart LR
-    GHA["⏱ GitHub Actions\ncron · 0 × × × × (hourly)"]
-    VF["▲ Vercel\n/api/cron/audit"]
-    SB[("🗄 Supabase\nPostgreSQL")]
-    RS["✉ Resend\nemail delivery"]
-    EM["📬 Executive\nreport"]
-
-    GHA -->|"POST + Bearer token"| VF
-    VF -->|"service_role queries\ntickets · SLA · org"| SB
-    SB -->|"compliance stats"| VF
-    VF -->|"HTML report"| RS
-    RS --> EM
-```
-
-**Step-by-step:**
-1. GitHub Actions runs `remote-audit.yml` on cron (`0 * * * *`) or `workflow_dispatch`
-2. Sends `POST /api/cron/audit` with `Authorization: Bearer $VIDAL_MCP_AUDIT_SECRET`
-3. Vercel executes `api/cron/audit.ts` — validates auth via `AUDIT_CRON_SECRET`
-4. Queries Supabase for active tickets, SLA compliance %, and VIP/high-risk count
-5. Renders branded HTML via `src/lib/audit-template.ts`
-6. Sends report through Resend (`RESEND_API_KEY`)
-7. GitHub marks run failed on any non-2xx response
-
----
-
-## MCP Architecture
-
-```mermaid
-flowchart TD
-    CD["Claude Desktop"]
-    RC["Remote MCP Client"]
-    IDX["src/index.ts\nstdio transport"]
-    VS["src/vercel-server.ts\nSSE transport"]
-    TOOLS["7 Core Tools"]
-    SB[("Supabase\nPostgreSQL")]
-    ADV["audit_sla\nautonomous-triage-engine"]
-    CO["Composio\norchestration layer"]
-    GH["GitHub actions"]
-    GM["Gmail alerts"]
-
-    CD -->|stdio| IDX
-    RC -->|HTTP / SSE| VS
-    IDX & VS --> TOOLS
-    TOOLS -->|direct client| SB
-    IDX --> ADV
-    ADV --> CO
-    CO --> SB
-    CO --> GH
-    CO --> GM
-```
-
-The codebase supports two execution modes:
-
-| Mode | Path | Use case |
-|---|---|---|
-| **Direct audit** | Vercel → Supabase → Resend | Scheduled, predictable SLA reporting |
-| **Orchestrated** | MCP tools → Composio → Supabase / GitHub / Gmail | Advanced workflows: RCA, escalation, issue automation |
-
----
-
-## Infrastructure
-
-The infrastructure layer is schema-segregated to satisfy Swiss DSG expectations around isolation, least privilege, and auditability. The SLA audit runtime is pinned to `helpdesk`, while shared platform primitives stay in `public`.
-
-### Schema Segregation
-
-| Schema | Scope | Objects / Examples | Security Posture |
-|---|---|---|---|
-| `public` | Shared platform primitives only | Supabase-managed metadata, extensions, shared non-helpdesk objects | No audit pipeline writes. Avoid tenant-sensitive helpdesk records here. |
-| `helpdesk` | Application and audit data plane | `tickets`, `ticket_comments`, `organizations`, `categories`, `ai_analysis`, `audit_runs` | Default runtime schema in `src/lib/supabase.ts`, RLS-aligned, isolated for Swiss DSG compliance. |
-
-### Version History
-
-| Version | Summary |
-|---|---|
-| `v1.2.2` | Successful migration to the `helpdesk` schema, implementation of `audit-runs.ts`, and hardening of security validations for the audit endpoint. |
-
----
-
-## Architecture Table
-
-| Layer | Path | Purpose |
-|---|---|---|
-| Core | `src/index.ts` | StdIO MCP entrypoint for local and desktop clients |
-| Core | `src/vercel-server.ts` | HTTP/SSE MCP server for Vercel deployment |
-| Core | `src/lib/` | Shared clients, orchestration adapters, audit logging, and schema capability helpers |
-| Tools | `src/tools/` | Business tools for SLA audit, triage, reporting, prioritization, and ticket updates |
-| Database | `src/lib/supabase.ts` | Centralized Supabase service-role client pinned to the isolated schema |
-| Database | `docs/sql/` | SQL assets and database hardening references |
-| Delivery | `api/cron/audit.ts` | Scheduled audit endpoint that computes and sends SLA reports |
-| Delivery | `.github/workflows/` | Recurring automation for compliance and audit execution |
-
----
-
-## Vercel Routing
-
-Defined in `vercel.json`:
-
-```
-/api/cron/audit  →  api/cron/audit.ts   (audit endpoint)
-/*               →  src/vercel-server.ts  (MCP SSE server)
-```
-
-The audit path is explicit to prevent the MCP catch-all from shadowing it.
-
----
-
-## Environment Variables
-
-Required for the remote audit path:
+Create `.env` locally or configure the same variables in Vercel.
 
 ```bash
-SUPABASE_URL=
-SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_SCHEMA=helpdesk
-MCP_ORGANIZATION_ID=
-AUDIT_CRON_SECRET=
-RESEND_API_KEY=
-RESEND_FROM_EMAIL=
+VIDAL_MCP_AUDIT_URL=https://your-vercel-domain.example/api/cron/audit
+
+MCP_ORGANIZATION_ID=your-organization-uuid
+MCP_AGENT_ID=your-agent-uuid
+
+ANTHROPIC_API_KEY=sk-ant-your-key
+
+AUDIT_CRON_SECRET=your-audit-cron-secret
+RESEND_API_KEY=re_your_key
+RESEND_FROM_EMAIL=helpdesk@example.com
+
+ALLOWED_ORIGINS=https://your-helpdesk-domain.example,https://your-mcp-domain.example
 ```
 
-Required for the Composio orchestration layer:
+### ALLOWED_ORIGINS Format
+
+`ALLOWED_ORIGINS` is a comma-separated allowlist. Each entry must be a full origin including protocol and host.
+
+Valid:
 
 ```bash
-COMPOSIO_API_KEY=
-COMPOSIO_USER_ID=
-MCP_AGENT_ID=
+ALLOWED_ORIGINS=https://app.example.ch,https://vidal-helpdesk-mcp.vercel.app
 ```
 
-GitHub Actions secrets required:
-
-```
-VIDAL_MCP_AUDIT_URL      # deployed /api/cron/audit URL
-VIDAL_MCP_AUDIT_SECRET   # matches AUDIT_CRON_SECRET
-```
-
----
-
-## Local Commands
+Invalid:
 
 ```bash
-npm install
-npm run build      # tsc
-npm run dev        # tsx watch src/index.ts (stdio MCP)
-npm run start      # node dist/index.js
-npm run lint       # tsc --noEmit
+ALLOWED_ORIGINS=app.example.ch,*
 ```
 
----
+If `ALLOWED_ORIGINS` is absent during `npm run build`, the build still succeeds. If it is empty at runtime for protected endpoints, the service returns a controlled runtime error instead of silently allowing access.
 
-## Swiss-Market Notes
+## GitHub Actions Secrets
 
-- Multi-tenant scope is driven by `MCP_ORGANIZATION_ID` — all queries are org-scoped.
-- The audit email reports aggregated SLA indicators only; no ticket body content is included.
-- Aligned with the Swiss revDSG / DSG compliance positioning of the wider `ticket-system` platform.
-- Reports carry "Complies with Swiss DSG regulations" footer, generated via Gemini 3 Flash.
+```bash
+VIDAL_MCP_AUDIT_URL=https://your-vercel-domain.example/api/cron/audit
+VIDAL_MCP_AUDIT_SECRET=your-audit-cron-secret
+```
 
----
+The scheduled audit workflow derives the `Origin` header from `VIDAL_MCP_AUDIT_URL`. That origin must also be present in `ALLOWED_ORIGINS`.
 
-## Related
+## Local Development
 
-- [`ticket-system`](https://github.com/vidal-renao/ticket-system) — the SaaS helpdesk platform this MCP layer operates on
-- Live MCP endpoint: [vidal-helpdesk-mcp.vercel.app](https://vidal-helpdesk-mcp.vercel.app)
+```bash
+npm ci
+npm run lint
+npm test
+npm run build
+npm run dev
+```
+
+## CI Gates
+
+The CI workflow is strict:
+
+```bash
+npm ci
+npm run lint
+npm test
+npm run build
+```
+
+There is no test bypass. Any failing test aborts the pipeline.
+
+## Audit Endpoint
+
+Endpoint:
+
+```text
+POST /api/cron/audit
+```
+
+Required headers:
+
+```http
+Origin: https://your-allowlisted-origin.example
+Authorization: Bearer <AUDIT_CRON_SECRET>
+Content-Type: application/json
+```
+
+Runtime responsibilities:
+
+- Validate `Origin` against `ALLOWED_ORIGINS`.
+- Validate runtime environment variables.
+- Query active tickets from the `helpdesk` schema.
+- Query shared organization metadata from the `public` schema.
+- Calculate SLA compliance.
+- Send audit email via Resend.
+- Persist audit run evidence.
+- Emit structured logs.
+
+## Structured Logging
+
+Every audit event is written as a single JSON line to `stdout`.
+
+```json
+{
+  "timestamp": "2026-06-11T17:42:10.916Z",
+  "level": "info",
+  "requestId": "request-id",
+  "organizationId": "organization-id",
+  "workflow": "audit-cron",
+  "httpStatus": 200,
+  "supabaseErrorCode": null,
+  "resendErrorCode": null,
+  "message": "Audit cron completed"
+}
+```
+
+This format is compatible with Vercel logs, Vercel Log Drains, Datadog pipelines, and SIEM ingestion.
+
+## MCP Tools
+
+| Tool | Purpose |
+|---|---|
+| `create_ticket` | Create a ticket with AI triage |
+| `get_ticket_status` | Fetch ticket state and SLA metadata |
+| `list_tickets` | List tickets with status and priority filters |
+| `prioritize_incident` | Re-run AI triage and update priority when confidence allows |
+| `suggest_solution` | Generate multilingual support guidance |
+| `update_ticket_status` | Update lifecycle status and optional internal notes |
+| `generate_report` | Generate helpdesk reporting for today, week, or month |
+
+All MCP tool inputs are validated with Zod before execution.
+
+## Production Notes
+
+- Configure `ALLOWED_ORIGINS` before enabling scheduled audits.
+- Keep `SUPABASE_SERVICE_ROLE_KEY` backend-only.
+- Rotate `AUDIT_CRON_SECRET` and GitHub Actions secrets periodically.
+- Use Vercel production environment variables, not preview defaults, for scheduled workflows.
+- Connect Vercel Log Drains or Datadog before relying on the audit workflow as operational evidence.

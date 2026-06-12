@@ -10,6 +10,23 @@ export const listTicketsSchema = z.object({
 
 export type ListTicketsInput = z.infer<typeof listTicketsSchema>;
 
+type ListTicketRow = {
+  id: string;
+  ticket_number: number;
+  title: string;
+  status: string;
+  priority: string;
+  detected_language: string | null;
+  sla_breached: boolean;
+  contains_pii: boolean;
+  created_at: string;
+  categories: { name: string } | Array<{ name: string }> | null;
+  ai_analysis:
+    | { sentiment: string | null; confidence_score: number | null; summary: string | null }
+    | Array<{ sentiment: string | null; confidence_score: number | null; summary: string | null }>
+    | null;
+};
+
 export async function listTickets(input: ListTicketsInput): Promise<string> {
   const supabase = getSupabaseClient();
   const organizationId = process.env.MCP_ORGANIZATION_ID!;
@@ -27,21 +44,30 @@ export async function listTickets(input: ListTicketsInput): Promise<string> {
   const { data, error } = await query;
   if (error) throw new Error(`Supabase error: ${error.message}`);
 
-  const tickets = (data ?? []).map((t: any) => ({
+  const rows = (data ?? []) as ListTicketRow[];
+  const tickets = rows.map((t) => ({
     ref: `TK-${String(t.ticket_number).padStart(4, "0")}`,
     id: t.id,
     title: t.title,
     status: t.status,
     priority: t.priority,
-    category: t.categories?.name ?? null,
+    category: firstRelation(t.categories)?.name ?? null,
     language: t.detected_language,
     sla_breached: t.sla_breached,
     contains_pii: t.contains_pii,
-    sentiment: t.ai_analysis?.sentiment ?? null,
-    ai_confidence: t.ai_analysis?.confidence_score ?? null,
-    ai_summary: t.ai_analysis?.summary ?? null,
+    sentiment: firstRelation(t.ai_analysis)?.sentiment ?? null,
+    ai_confidence: firstRelation(t.ai_analysis)?.confidence_score ?? null,
+    ai_summary: firstRelation(t.ai_analysis)?.summary ?? null,
     created_at: t.created_at,
   }));
 
   return JSON.stringify({ success: true, count: tickets.length, tickets });
+}
+
+function firstRelation<T>(relation: T | T[] | null): T | null {
+  if (Array.isArray(relation)) {
+    return relation[0] ?? null;
+  }
+
+  return relation;
 }

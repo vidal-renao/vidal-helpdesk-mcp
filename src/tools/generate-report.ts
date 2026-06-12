@@ -44,7 +44,7 @@ export async function generateReport(input: GenerateReportInput): Promise<string
     : 0;
 
   const catMap: Record<string, number> = {};
-  all.forEach(t => { const cat = (t as any).categories?.name ?? "Other"; catMap[cat] = (catMap[cat] ?? 0) + 1; });
+  all.forEach(t => { const cat = t.categories?.name ?? "Other"; catMap[cat] = (catMap[cat] ?? 0) + 1; });
   const topCategories = Object.entries(catMap).sort((a,b) => b[1]-a[1]).slice(0,5).map(([category,count]) => ({ category, count }));
 
   const slaComplianceRate = all.length > 0 ? Math.round(((all.length - slaBreach.length) / all.length) * 100) : 100;

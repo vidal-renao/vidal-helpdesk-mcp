@@ -49,12 +49,12 @@ export async function triageTicket(title: string, description: string): Promise<
   });
   const processingTime = Date.now() - startTime;
   const rawText = response.content[0].type === "text" ? response.content[0].text : "";
-  let result: any;
+  let result: TriageResultWithMeta;
   try {
-    result = JSON.parse(rawText);
+    result = JSON.parse(rawText) as TriageResultWithMeta;
   } catch {
     const match = rawText.match(/```json\n?([\s\S]*?)\n?```/) || rawText.match(/\{[\s\S]*\}/);
-    if (match) result = JSON.parse(match[1] ?? match[0]);
+    if (match) result = JSON.parse(match[1] ?? match[0]) as TriageResultWithMeta;
     else throw new Error(`Unparseable AI response: ${rawText.substring(0, 200)}`);
   }
   return { ...result, model_used: response.model, input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens, processing_time_ms: processingTime };

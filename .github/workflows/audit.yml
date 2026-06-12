@@ -1,0 +1,59 @@
+name: Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Audit with Diagnostics
+        shell: bash
+        run: |
+          set -u
+
+          RESPONSE_BODY="response_body.txt"
+          RESPONSE_HEADERS="response_headers.txt"
+
+          if [ -z "${{ secrets.VIDAL_MCP_AUDIT_URL }}" ]; then
+            echo "::error::VIDAL_MCP_AUDIT_URL secret is empty or not configured"
+            exit 1
+          fi
+
+          if [ -z "${{ secrets.VIDAL_MCP_AUDIT_SECRET }}" ]; then
+            echo "::error::VIDAL_MCP_AUDIT_SECRET secret is empty or not configured"
+            exit 1
+          fi
+
+          AUDIT_ORIGIN=$(node -e 'console.log(new URL(process.argv[1]).origin)' "${{ secrets.VIDAL_MCP_AUDIT_URL }}")
+
+          HTTP_CODE=$(curl --show-error --silent \
+            --request POST "${{ secrets.VIDAL_MCP_AUDIT_URL }}" \
+            --header "Origin: $AUDIT_ORIGIN" \
+            --header "Authorization: Bearer ${{ secrets.VIDAL_MCP_AUDIT_SECRET }}" \
+            --header "Content-Type: application/json" \
+            --data '{"source":"github-actions","workflow":"audit"}' \
+            --dump-header "$RESPONSE_HEADERS" \
+            --output "$RESPONSE_BODY" \
+            --write-out "%{http_code}")
+
+          echo "HTTP status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::group::Webhook response headers"
+            sed -E 's/(authorization|cookie|set-cookie):.*/\1: [redacted]/Ig' "$RESPONSE_HEADERS" || true
+            echo "::endgroup::"
+
+            echo "::group::Webhook response body"
+            cat "$RESPONSE_BODY" || true
+            echo "::endgroup::"
+
+            echo "::error::Remote audit failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          echo "::group::Webhook response body"
+          cat "$RESPONSE_BODY" || true
+          echo "::endgroup::"

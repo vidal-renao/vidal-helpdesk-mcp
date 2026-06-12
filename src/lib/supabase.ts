@@ -2,6 +2,7 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 type AnySchemaSupabaseClient = SupabaseClient<any, any, any>;
+type SupabaseSchemaName = "helpdesk" | "public";
 
 let client: AnySchemaSupabaseClient | null = null;
 export const SUPABASE_SCHEMA = process.env.SUPABASE_SCHEMA?.trim() || "helpdesk";
@@ -16,6 +17,18 @@ export function getSupabaseClient(): AnySchemaSupabaseClient {
     db: { schema: SUPABASE_SCHEMA },
   });
   return client;
+}
+
+export function getSupabaseSchema(schema: SupabaseSchemaName) {
+  return getSupabaseClient().schema(schema);
+}
+
+export function getHelpdeskSchema() {
+  return getSupabaseSchema("helpdesk");
+}
+
+export function getPublicSchema() {
+  return getSupabaseSchema("public");
 }
 
 export async function resolveCategoryId(

@@ -62,7 +62,7 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
     input_tokens: triage.input_tokens,
     output_tokens: triage.output_tokens,
     processing_time_ms: triage.processing_time_ms,
-    raw_response: triage as any,
+    raw_response: triage,
   });
 
   const ticketRef = `TK-${String(ticket.ticket_number).padStart(4, "0")}`;

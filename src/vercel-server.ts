@@ -13,6 +13,8 @@ import { prioritizeIncidentSchema, prioritizeIncident } from "./tools/prioritize
 import { suggestSolutionSchema, suggestSolution } from "./tools/suggest-solution.js";
 import { updateTicketStatusSchema, updateTicketStatus } from "./tools/update-ticket-status.js";
 import { generateReportSchema, generateReport } from "./tools/generate-report.js";
+import { enforceCors } from "./lib/cors.js";
+import { createValidatedToolHandler } from "./lib/mcp-tool-handler.js";
 import { SUPABASE_SCHEMA } from "./lib/supabase.js";
 
 function createMcpServer() {
@@ -25,49 +27,49 @@ function createMcpServer() {
     "create_ticket",
     "Create IT support ticket with AI triage. Priority: low/medium/high/critical. Returns TK-XXXX ref.",
     createTicketSchema.shape,
-    async (input: any) => ({ content: [{ type: "text" as const, text: await createTicket(input) }] })
+    createValidatedToolHandler(createTicketSchema, createTicket)
   );
 
   server.tool(
     "get_ticket_status",
     'Get ticket details by ref (e.g. "TK-1001") or UUID. Includes SLA, AI analysis, sentiment.',
     getTicketStatusSchema.shape,
-    async (input: any) => ({ content: [{ type: "text" as const, text: await getTicketStatus(input) }] })
+    createValidatedToolHandler(getTicketStatusSchema, getTicketStatus)
   );
 
   server.tool(
     "list_tickets",
     "List tickets with optional filters by status and priority.",
     listTicketsSchema.shape,
-    async (input: any) => ({ content: [{ type: "text" as const, text: await listTickets(input) }] })
+    createValidatedToolHandler(listTicketsSchema, listTickets)
   );
 
   server.tool(
     "prioritize_incident",
     "Re-run AI triage with new context. Updates priority and ai_analysis if confidence >= 60%.",
     prioritizeIncidentSchema.shape,
-    async (input: any) => ({ content: [{ type: "text" as const, text: await prioritizeIncident(input) }] })
+    createValidatedToolHandler(prioritizeIncidentSchema, prioritizeIncident)
   );
 
   server.tool(
     "suggest_solution",
     "Generate step-by-step solution in DE/EN/ES/FR/IT. Saves as internal comment.",
     suggestSolutionSchema.shape,
-    async (input: any) => ({ content: [{ type: "text" as const, text: await suggestSolution(input) }] })
+    createValidatedToolHandler(suggestSolutionSchema, suggestSolution)
   );
 
   server.tool(
     "update_ticket_status",
     "Update ticket status with optional internal comment.",
     updateTicketStatusSchema.shape,
-    async (input: any) => ({ content: [{ type: "text" as const, text: await updateTicketStatus(input) }] })
+    createValidatedToolHandler(updateTicketStatusSchema, updateTicketStatus)
   );
 
   server.tool(
     "generate_report",
     "Generate helpdesk report for today/week/month. SLA compliance, priorities, avg resolution.",
     generateReportSchema.shape,
-    async (input: any) => ({ content: [{ type: "text" as const, text: await generateReport(input) }] })
+    createValidatedToolHandler(generateReportSchema, generateReport)
   );
 
   return server;
@@ -78,14 +80,19 @@ const sessions = new Map<string, SSEServerTransport>();
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
 
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
+  if (url.pathname === "/sse" || url.pathname === "/messages") {
+    const methods = url.pathname === "/sse" ? ["GET", "OPTIONS"] : ["POST", "OPTIONS"];
+    try {
+      const cors = enforceCors(req, res, methods);
+      if (!cors.allowed || cors.preflight) {
+        return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "CORS configuration error";
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: message }));
+      return;
+    }
   }
 
   if (url.pathname === "/" || url.pathname === "/health") {

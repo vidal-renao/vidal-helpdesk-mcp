@@ -13,6 +13,7 @@ import { prioritizeIncidentSchema, prioritizeIncident } from "./tools/prioritize
 import { suggestSolutionSchema, suggestSolution } from "./tools/suggest-solution.js";
 import { updateTicketStatusSchema, updateTicketStatus } from "./tools/update-ticket-status.js";
 import { generateReportSchema, generateReport } from "./tools/generate-report.js";
+import { createValidatedToolHandler } from "./lib/mcp-tool-handler.js";
 
 function validateEnv() {
   const required = [
@@ -38,49 +39,49 @@ server.tool(
   "create_ticket",
   "Create an IT support ticket with full AI triage (Claude Sonnet). Priority: low/medium/high/critical. Saves to tickets + ai_analysis table. Returns TK-XXXX ref.",
   createTicketSchema.shape,
-  async (input: any) => ({ content: [{ type: "text" as const, text: await createTicket(input) }] })
+  createValidatedToolHandler(createTicketSchema, createTicket)
 );
 
 server.tool(
   "get_ticket_status",
   'Get full details of a ticket by ref (e.g. "TK-1001") or UUID. Includes SLA countdown, AI analysis, sentiment, category.',
   getTicketStatusSchema.shape,
-  async (input: any) => ({ content: [{ type: "text" as const, text: await getTicketStatus(input) }] })
+  createValidatedToolHandler(getTicketStatusSchema, getTicketStatus)
 );
 
 server.tool(
   "list_tickets",
   "List tickets with optional filters by status and priority. Returns up to 50 tickets with AI summary.",
   listTicketsSchema.shape,
-  async (input: any) => ({ content: [{ type: "text" as const, text: await listTickets(input) }] })
+  createValidatedToolHandler(listTicketsSchema, listTickets)
 );
 
 server.tool(
   "prioritize_incident",
   "Re-run AI triage on an existing ticket with optional new context. Updates priority and upserts ai_analysis if confidence >= 60%.",
   prioritizeIncidentSchema.shape,
-  async (input: any) => ({ content: [{ type: "text" as const, text: await prioritizeIncident(input) }] })
+  createValidatedToolHandler(prioritizeIncidentSchema, prioritizeIncident)
 );
 
 server.tool(
   "suggest_solution",
   "Generate step-by-step IT solution in DE/EN/ES/FR/IT. Saves as internal comment in ticket_comments. Updates status to in_progress.",
   suggestSolutionSchema.shape,
-  async (input: any) => ({ content: [{ type: "text" as const, text: await suggestSolution(input) }] })
+  createValidatedToolHandler(suggestSolutionSchema, suggestSolution)
 );
 
 server.tool(
   "update_ticket_status",
   "Update ticket status: open/in_progress/pending_customer/pending_third_party/resolved/closed. Optional internal comment. Auto-sets resolved_at/closed_at.",
   updateTicketStatusSchema.shape,
-  async (input: any) => ({ content: [{ type: "text" as const, text: await updateTicketStatus(input) }] })
+  createValidatedToolHandler(updateTicketStatusSchema, updateTicketStatus)
 );
 
 server.tool(
   "generate_report",
   "Generate real helpdesk report from Supabase for today/week/month. SLA compliance, priority breakdown, avg resolution, top categories.",
   generateReportSchema.shape,
-  async (input: any) => ({ content: [{ type: "text" as const, text: await generateReport(input) }] })
+  createValidatedToolHandler(generateReportSchema, generateReport)
 );
 
 async function main() {
