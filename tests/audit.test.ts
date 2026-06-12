@@ -308,6 +308,24 @@ describe("api/cron/audit", () => {
     );
   });
 
+  it("returns 200 when audit run persistence fails after metrics and email succeed", async () => {
+    mocks.auditRunsInsert.mockResolvedValue({
+      error: {
+        message: "Could not find the table 'public.audit_runs' in the schema cache",
+        code: "PGRST205",
+      },
+    });
+
+    const { res, json } = await callAudit("POST");
+
+    expect(res.statusCode).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.auditRun).toMatchObject({
+      persisted: false,
+      error: "Could not find the table 'public.audit_runs' in the schema cache",
+    });
+  });
+
   it("returns 500 with a controlled error body when required environment is missing", async () => {
     delete process.env.MCP_ORGANIZATION_ID;
 

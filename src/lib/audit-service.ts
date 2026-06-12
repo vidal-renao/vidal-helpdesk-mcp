@@ -32,7 +32,8 @@ export type AuditCronPayload = {
     fingerprint: string;
     overallSeverity: string;
     findingsCount: number;
-    persisted: true;
+    persisted: boolean;
+    error: string | null;
   };
   html: string;
   emailSent: boolean;
@@ -108,6 +109,8 @@ export class AuditService {
       email.error ?? "ok",
     ]);
 
+    let auditRunPersisted = true;
+    let auditRunPersistError: string | null = null;
     const { error: auditRunError } = await auditRunsTable().insert({
       organization_id: organizationId,
       fingerprint,
@@ -119,6 +122,8 @@ export class AuditService {
     if (auditRunError) {
       const auditRunMeta = formatSupabaseError(auditRunError);
       const code = auditRunError.code ?? null;
+      auditRunPersisted = false;
+      auditRunPersistError = auditRunMeta?.message ?? "unknown error";
       logError({
         requestId,
         organizationId,
@@ -126,9 +131,8 @@ export class AuditService {
         httpStatus: 500,
         supabaseErrorCode: code,
         resendErrorCode: null,
-        message: `Supabase audit_runs insert failed: ${auditRunMeta?.message ?? "unknown error"}`,
+        message: `Supabase audit_runs insert failed: ${auditRunPersistError}`,
       });
-      throw new Error(`Supabase audit_runs insert failed: ${auditRunMeta?.message ?? "unknown error"}`);
     }
 
     logInfo({
@@ -158,7 +162,8 @@ export class AuditService {
         fingerprint,
         overallSeverity,
         findingsCount,
-        persisted: true,
+        persisted: auditRunPersisted,
+        error: auditRunPersistError,
       },
       html,
       emailSent: email.sent,
