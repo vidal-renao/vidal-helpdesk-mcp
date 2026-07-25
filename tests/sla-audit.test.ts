@@ -112,6 +112,8 @@ describe("buildSlaAuditReport", () => {
     expect(report.unassigned_ticket_count).toBe(2);
     expect(report.companies).toEqual([{ company_id: null, company_name: "Unassigned", active_ticket_count: 2 }]);
     expect(report.tickets.every((t) => t.company_id === null && t.company_name === null)).toBe(true);
+    expect(report.tickets.find((t) => t.ticket_reference === "TK-0002")?.customer_profile_id).toBe("profile-unknown");
+    expect(report.tickets.find((t) => t.ticket_reference === "TK-0002")?.company_assignment_status).toBe("unassigned");
   });
 
   it("always returns null project fields — no ticket-to-project relationship exists in this schema", async () => {

@@ -11,6 +11,7 @@ export type SlaAuditTicket = {
   /** @deprecated Use customer_profile_id. This is not a companies-table id. */
   company_id: string | null;
   company_name: string | null;
+  company_assignment_status: "assigned" | "unassigned";
   project_id: null;
   project_name: null;
   sla_status: SlaStatus;
@@ -152,9 +153,10 @@ function normalizeTicket(ticket: TicketRow, companyByProfileId: Map<string, stri
     ticket_reference: ticket.ticket_number != null ? `TK-${String(ticket.ticket_number).padStart(4, "0")}` : null,
     ticket_title: ticket.title,
     ticket_status: ticket.status,
-    customer_profile_id: ticket.created_by && companyName ? ticket.created_by : null,
+    customer_profile_id: ticket.created_by,
     company_id: ticket.created_by && companyName ? ticket.created_by : null,
     company_name: companyName,
+    company_assignment_status: companyName ? "assigned" : "unassigned",
     project_id: null,
     project_name: null,
     sla_status: slaStatus,
