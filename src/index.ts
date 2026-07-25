@@ -13,6 +13,7 @@ import { prioritizeIncidentSchema, prioritizeIncident } from "./tools/prioritize
 import { suggestSolutionSchema, suggestSolution } from "./tools/suggest-solution.js";
 import { updateTicketStatusSchema, updateTicketStatus } from "./tools/update-ticket-status.js";
 import { generateReportSchema, generateReport } from "./tools/generate-report.js";
+import { getSlaAuditReportSchema, getSlaAuditReport } from "./tools/get-sla-audit-report.js";
 import { createValidatedToolHandler } from "./lib/mcp-tool-handler.js";
 
 function validateEnv() {
@@ -82,6 +83,13 @@ server.tool(
   "Generate real helpdesk report from Supabase for today/week/month. SLA compliance, priority breakdown, avg resolution, top categories.",
   generateReportSchema.shape,
   createValidatedToolHandler(generateReportSchema, generateReport)
+);
+
+server.tool(
+  "get_sla_audit_report",
+  "Read-only snapshot of currently active tickets with SLA risk detail: compliance %, per-company active-ticket breakdown, VIP risks (company, risk reason, required action, due date), and ordered action items. project_id/project_name are always null — no ticket-to-project relationship exists in this schema.",
+  getSlaAuditReportSchema.shape,
+  createValidatedToolHandler(getSlaAuditReportSchema, getSlaAuditReport)
 );
 
 async function main() {

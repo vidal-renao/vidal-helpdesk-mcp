@@ -1,372 +1,144 @@
+import { createHash } from "node:crypto";
 import { Resend } from "resend";
-
-import { auditRunsTable, buildAuditFingerprint, findRecentAuditRun, formatSupabaseError } from "./audit-runs.js";
+import {
+  claimAuditRunSlot,
+  getUtcDayPeriod,
+  markAuditRunFailed,
+  markAuditRunSending,
+  markAuditRunSent,
+  markDeliveryUnknown,
+  normalizeRecipient,
+  type DeliveryPayload,
+} from "./audit-runs.js";
 import { auditTemplate } from "./audit-template.js";
 import { getRuntimeEnv } from "./env.js";
 import { logError, logInfo } from "./logger.js";
-import { getDomainSchema, getPublicSchema, SUPABASE_SCHEMA } from "./supabase.js";
+import { buildSlaAuditReport } from "./sla-audit.js";
 
-type AuditServiceOptions = {
-  requestId: string;
-};
-
-type OrganizationRow = {
-  name: string | null;
-  slug: string | null;
-};
-
-export type AuditCronPayload = {
-  success: true;
-  generatedAt: string;
-  organizationId: string;
-  organizationName: string | null;
-  organizationSlug: string | null;
-  recipient: string;
-  stats: {
-    compliance: number;
-    totalTickets: number;
-    vipBreaches: number;
-  };
-  auditRun: {
-    schema: string;
-    fingerprint: string;
-    overallSeverity: string;
-    findingsCount: number;
-    persisted: boolean;
-    error: string | null;
-  };
-  html: string;
-  emailSent: boolean;
-  emailSkippedReason: string | null;
-  emailError: string | null;
-  emailErrorDetail: unknown;
-  emailData: unknown;
-};
+const REPORT_TYPE = "sla_daily_audit";
 
 export class AuditService {
-  static async run({ requestId }: AuditServiceOptions): Promise<AuditCronPayload> {
-    const startedAt = Date.now();
+  static async run({ requestId }: { requestId: string }) {
     const env = getRuntimeEnv({ requireAuditRuntime: true });
-    const organizationId = env.MCP_ORGANIZATION_ID;
+    const organizationId = env.MCP_ORGANIZATION_ID!;
+    const recipient = normalizeRecipient(env.AUDIT_RECIPIENT_EMAIL || "htcpacoxo31@gmail.com");
+    if (!env.AUDIT_EMAIL_ENABLED) return skipped(organizationId, "disabled");
 
-    if (!organizationId) {
-      throw new Error("MCP_ORGANIZATION_ID is not configured");
+    const period = getUtcDayPeriod();
+    const claim = await claimAuditRunSlot({ organizationId, reportType: REPORT_TYPE, period, recipient });
+    if (!claim.claimed) {
+      event("info", requestId, organizationId, `Claim rejected: ${claim.reason}`);
+      return skipped(organizationId, claim.reason);
     }
 
-    logInfo({
-      requestId,
-      organizationId,
-      workflow: "audit-cron",
-      httpStatus: null,
-      supabaseErrorCode: null,
-      resendErrorCode: null,
-      message: "Audit cron started",
-    });
-
-    const metrics = await this.loadAuditMetrics(requestId, organizationId);
-    const total = metrics.totalTickets;
-    const compliant = metrics.compliantTickets;
-    const vip = metrics.vipBreaches;
-    const findingsCount = Math.max(total - compliant, 0);
-    const compliance = calculateCompliance(total, compliant);
-    const html = auditTemplate({
-      compliance,
-      totalTickets: total,
-      vipBreaches: vip,
-    });
-
-    const recipient = "htcpacoxo31@gmail.com".trim().toLowerCase();
-    const subject = `Vidal Audit: ${compliance}% SLA Compliance - ${new Date().toLocaleDateString()}`;
-    const from = env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev";
-    const overallSeverity = vip > 0 ? "critical" : compliance < 100 ? "warning" : "info";
-
-    const fingerprint = buildAuditFingerprint([
-      organizationId,
-      compliance,
-      total,
-      compliant,
-      vip,
-      overallSeverity,
-      findingsCount,
-    ]);
-    const duplicate = await this.findDuplicateAuditRun({
-      requestId,
-      organizationId,
-      fingerprint,
-      dedupeMinutes: env.AUDIT_EMAIL_DEDUPE_MINUTES,
-    });
-    const email = await this.deliverAuditEmail({
-      requestId,
-      organizationId,
-      enabled: env.AUDIT_EMAIL_ENABLED,
-      duplicate,
-      apiKey: env.RESEND_API_KEY,
-      from,
-      to: recipient,
-      subject,
-      html,
-    });
-
-    const payload = {
-      compliance,
-      totalTickets: total,
-      compliantTickets: compliant,
-      vipBreaches: vip,
-      recipient,
-      emailSent: email.sent,
-      emailSkippedReason: email.skippedReason,
-      emailError: email.error,
-      organizationName: metrics.organization?.name ?? null,
-      organizationSlug: metrics.organization?.slug ?? null,
-    };
-    let auditRunPersisted = true;
-    let auditRunPersistError: string | null = null;
-    const { error: auditRunError } = await auditRunsTable().insert({
-      organization_id: organizationId,
-      fingerprint,
-      overall_severity: overallSeverity,
-      findings_count: findingsCount,
-      payload,
-    });
-
-    if (auditRunError) {
-      const auditRunMeta = formatSupabaseError(auditRunError);
-      const code = auditRunError.code ?? null;
-      auditRunPersisted = false;
-      auditRunPersistError = auditRunMeta?.message ?? "unknown error";
-      logError({
-        requestId,
-        organizationId,
-        workflow: "audit-cron",
-        httpStatus: 500,
-        supabaseErrorCode: code,
-        resendErrorCode: null,
-        message: `Supabase audit_runs insert failed: ${auditRunPersistError}`,
-      });
-    }
-
-    logInfo({
-      requestId,
-      organizationId,
-      workflow: "audit-cron",
-      httpStatus: 200,
-      supabaseErrorCode: null,
-      resendErrorCode: null,
-      message: "Audit cron completed",
-      durationMs: Date.now() - startedAt,
-      emailSent: email.sent,
-      auditRunPersisted,
-    });
-
-    return {
-      success: true,
-      generatedAt: new Date().toISOString(),
-      organizationId,
-      organizationName: metrics.organization?.name ?? null,
-      organizationSlug: metrics.organization?.slug ?? null,
-      recipient,
-      stats: {
-        compliance,
-        totalTickets: total,
-        vipBreaches: vip,
-      },
-      auditRun: {
-        schema: SUPABASE_SCHEMA,
-        fingerprint,
-        overallSeverity,
-        findingsCount,
-        persisted: auditRunPersisted,
-        error: auditRunPersistError,
-      },
-      html,
-      emailSent: email.sent,
-      emailSkippedReason: email.skippedReason,
-      emailError: email.error,
-      emailErrorDetail: email.errorDetail,
-      emailData: email.data,
-    };
-  }
-
-  private static async loadAuditMetrics(requestId: string, organizationId: string) {
-    const domainSchema = getDomainSchema();
-    const publicSchema = getPublicSchema();
-    const activeStatuses = ["open", "in_progress", "pending_customer", "pending_third_party"];
-
-    const [
-      { count: totalTickets, error: totalTicketsError },
-      { count: compliantTickets, error: compliantTicketsError },
-      { count: vipBreaches, error: vipBreachesError },
-      { data: organization, error: organizationError },
-    ] = await Promise.all([
-      domainSchema
-        .from("tickets")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", organizationId)
-        .in("status", activeStatuses),
-      domainSchema
-        .from("tickets")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", organizationId)
-        .in("status", activeStatuses)
-        .eq("sla_breached", false),
-      domainSchema
-        .from("tickets")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", organizationId)
-        .in("status", activeStatuses)
-        .in("priority", ["high", "critical"]),
-      publicSchema
-        .from("organizations")
-        .select("name, slug")
-        .eq("id", organizationId)
-        .maybeSingle<OrganizationRow>(),
-    ]);
-
-    if (totalTicketsError) {
-      this.logSupabaseError(requestId, organizationId, "Supabase total tickets query failed", totalTicketsError);
-      throw new Error(`Supabase total tickets query failed: ${totalTicketsError.message}`);
-    }
-
-    if (compliantTicketsError) {
-      this.logSupabaseError(requestId, organizationId, "Supabase compliant tickets query failed", compliantTicketsError);
-      throw new Error(`Supabase compliant tickets query failed: ${compliantTicketsError.message}`);
-    }
-
-    if (vipBreachesError) {
-      this.logSupabaseError(requestId, organizationId, "Supabase VIP breaches query failed", vipBreachesError);
-      throw new Error(`Supabase VIP breaches query failed: ${vipBreachesError.message}`);
-    }
-
-    if (organizationError) {
-      this.logSupabaseError(requestId, organizationId, "Supabase organization query failed", organizationError);
-      throw new Error(`Supabase organization query failed: ${organizationError.message}`);
-    }
-
-    return {
-      totalTickets: totalTickets ?? 0,
-      compliantTickets: compliantTickets ?? 0,
-      vipBreaches: vipBreaches ?? 0,
-      organization,
-    };
-  }
-
-  private static async deliverAuditEmail(input: {
-    requestId: string;
-    organizationId: string;
-    enabled: boolean;
-    duplicate: boolean;
-    apiKey: string | undefined;
-    from: string;
-    to: string;
-    subject: string;
-    html: string;
-  }) {
-    if (!input.enabled) {
-      return { sent: false, skippedReason: "disabled", error: null, errorDetail: null, data: null };
-    }
-
-    if (input.duplicate) {
-      return { sent: false, skippedReason: "duplicate_recent_audit", error: null, errorDetail: null, data: null };
-    }
-
+    let phase: "pending" | "sending" = "pending";
     try {
-      if (!input.apiKey) {
-        throw new Error("RESEND_API_KEY is not configured");
+      const report = await buildSlaAuditReport(organizationId, period.start, period);
+      const payload: DeliveryPayload = {
+        from: env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev",
+        to: recipient,
+        subject: `VIDAL Daily SLA Report: ${report.compliance_percentage}% compliance - ${period.start.toISOString().slice(0, 10)}`,
+        html: auditTemplate(report),
+      };
+      const prepared = await markAuditRunSending(claim.id, payload, claim.payloadHash);
+      if (!prepared.ok) {
+        await markAuditRunFailed(claim.id, "pending", prepared.reason, "Delivery payload or state conflict");
+        throw new Error(prepared.reason === "payload_conflict" ? "Stable delivery payload conflict" : "Could not enter sending state");
+      }
+      phase = "sending";
+      const idempotencyKey = `sla-audit/${claim.id}`;
+      event("info", requestId, organizationId, "Email delivery started", claim.id, idempotencyKey);
+
+      const outcome = await send(env.RESEND_API_KEY!, payload, idempotencyKey);
+      if (outcome.kind === "rejected") {
+        await markAuditRunFailed(claim.id, "sending", outcome.code, outcome.message);
+        return result(report, claim.id, false, "send_rejected", outcome.message);
+      }
+      if (outcome.kind === "unknown") {
+        await markDeliveryUnknown(claim.id, outcome.code, outcome.message);
+        event("error", requestId, organizationId, "Delivery unknown; manual reconciliation required", claim.id, idempotencyKey);
+        return result(report, claim.id, false, "delivery_unknown", outcome.message);
       }
 
-      const resend = new Resend(input.apiKey);
-      const { data, error } = await resend.emails.send({
-        from: input.from,
-        to: input.to,
-        subject: input.subject,
-        html: input.html,
-      });
-
-      if (error) {
-        const code = getResendErrorCode(error);
-        logError({
-          requestId: input.requestId,
-          organizationId: input.organizationId,
-          workflow: "audit-cron",
-          httpStatus: null,
-          supabaseErrorCode: null,
-          resendErrorCode: code,
-          message: `Resend audit email failed: ${error.message}`,
-        });
-        return { sent: false, skippedReason: null, error: error.message, errorDetail: error, data };
+      let persisted = false;
+      for (let attempt = 0; attempt < 3 && !persisted; attempt += 1) {
+        persisted = (await markAuditRunSent(claim.id, outcome.messageId)).ok;
       }
-
-      return { sent: true, skippedReason: null, error: null, errorDetail: null, data };
+      if (!persisted) {
+        await markDeliveryUnknown(claim.id, "sent_persistence_failed", "Provider confirmed but sent state could not be persisted", outcome.messageId);
+        event("error", requestId, organizationId, "Provider confirmed; persistence failed; manual reconciliation required", claim.id, idempotencyKey);
+        return result(report, claim.id, false, "delivery_unknown", "Provider confirmed; local state persistence failed");
+      }
+      event("info", requestId, organizationId, "Provider confirmed and sent state persisted", claim.id, idempotencyKey);
+      return result(report, claim.id, true, null, null);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown email error";
-      logError({
-        requestId: input.requestId,
-        organizationId: input.organizationId,
-        workflow: "audit-cron",
-        httpStatus: null,
-        supabaseErrorCode: null,
-        resendErrorCode: getResendErrorCode(error),
-        message: `Resend audit email failed: ${message}`,
-      });
-      return { sent: false, skippedReason: null, error: message, errorDetail: error, data: null };
+      const message = error instanceof Error ? error.message : "Unknown audit error";
+      if (phase === "pending") await markAuditRunFailed(claim.id, "pending", "pre_provider_failure", message);
+      else await markDeliveryUnknown(claim.id, "unexpected_after_sending", message);
+      throw error;
     }
-  }
-
-  private static async findDuplicateAuditRun(input: {
-    requestId: string;
-    organizationId: string;
-    fingerprint: string;
-    dedupeMinutes: number;
-  }): Promise<boolean> {
-    if (input.dedupeMinutes <= 0) {
-      return false;
-    }
-
-    const since = new Date(Date.now() - input.dedupeMinutes * 60_000).toISOString();
-    const { data, error } = await findRecentAuditRun(input.fingerprint, since);
-
-    if (error) {
-      logError({
-        requestId: input.requestId,
-        organizationId: input.organizationId,
-        workflow: "audit-cron",
-        httpStatus: null,
-        supabaseErrorCode: error.code ?? null,
-        resendErrorCode: null,
-        message: `Supabase audit_runs duplicate check failed: ${error.message}`,
-      });
-      return false;
-    }
-
-    return Boolean(data);
-  }
-
-  private static logSupabaseError(
-    requestId: string,
-    organizationId: string,
-    message: string,
-    error: { code?: string | null; message: string }
-  ) {
-    logError({
-      requestId,
-      organizationId,
-      workflow: "audit-cron",
-      httpStatus: 500,
-      supabaseErrorCode: error.code ?? null,
-      resendErrorCode: null,
-      message: `${message}: ${error.message}`,
-    });
   }
 }
 
-export function calculateCompliance(totalTickets: number, compliantTickets: number): number {
-  return totalTickets > 0 ? Number(((compliantTickets / totalTickets) * 100).toFixed(2)) : 100;
+async function send(apiKey: string, payload: DeliveryPayload, idempotencyKey: string) {
+  try {
+    const { data, error } = await new Resend(apiKey).emails.send(payload, { idempotencyKey });
+    if (error) return { kind: "rejected" as const, code: error.name, message: error.message };
+    return { kind: "confirmed" as const, messageId: data?.id ?? null };
+  } catch (error) {
+    return {
+      kind: "unknown" as const,
+      code: "provider_response_unknown",
+      message: error instanceof Error ? error.message : "Provider response unknown",
+    };
+  }
 }
 
-function getResendErrorCode(error: unknown): string | null {
-  if (typeof error === "object" && error !== null && "name" in error && typeof error.name === "string") {
-    return error.name;
-  }
+function result(report: Awaited<ReturnType<typeof buildSlaAuditReport>>, id: string, emailSent: boolean, skippedReason: string | null, emailError: string | null) {
+  return {
+    success: true,
+    generatedAt: report.generated_at,
+    organizationId: report.organization_id,
+    organizationName: report.organization_name,
+    stats: {
+      compliance: report.compliance_percentage,
+      totalTickets: report.active_ticket_count,
+      companyCount: report.company_count,
+      vipRiskCount: report.vip_risk_count,
+    },
+    auditRun: { id, claimed: true, skippedReason },
+    emailSent,
+    emailSkippedReason: skippedReason,
+    emailError,
+  };
+}
 
-  return null;
+function skipped(organizationId: string, reason: string) {
+  return {
+    success: true,
+    generatedAt: new Date().toISOString(),
+    organizationId,
+    organizationName: null,
+    stats: { compliance: 0, totalTickets: 0, companyCount: 0, vipRiskCount: 0 },
+    auditRun: { id: null, claimed: false, skippedReason: reason },
+    emailSent: false,
+    emailSkippedReason: reason,
+    emailError: null,
+  };
+}
+
+function event(level: "info" | "error", requestId: string, organizationId: string, message: string, auditRunId?: string, idempotencyKey?: string) {
+  const suffix = auditRunId
+    ? ` audit_run_id=${auditRunId} idempotency_key_hash=${createHash("sha256").update(idempotencyKey ?? "").digest("hex").slice(0, 16)}`
+    : "";
+  const fields = {
+    requestId,
+    organizationId,
+    workflow: "audit-cron" as const,
+    httpStatus: null,
+    supabaseErrorCode: null,
+    resendErrorCode: null,
+    message: `${message}${suffix}`,
+  };
+  level === "info" ? logInfo(fields) : logError(fields);
 }

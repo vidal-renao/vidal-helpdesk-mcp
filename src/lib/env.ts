@@ -17,13 +17,14 @@ const envSchema = z.object({
         : []
     ),
   AUDIT_CRON_SECRET: z.string().optional(),
+  MCP_BEARER_TOKEN: z.string().optional(),
   AUDIT_EMAIL_ENABLED: z
     .enum(["true", "false"])
     .default("true")
     .transform((value) => value === "true"),
-  AUDIT_EMAIL_DEDUPE_MINUTES: z.coerce.number().int().min(0).max(1440).default(120),
   MCP_ORGANIZATION_ID: z.string().min(1).optional(),
   RESEND_FROM_EMAIL: z.string().email().optional(),
+  AUDIT_RECIPIENT_EMAIL: z.string().email().optional(),
   SUPABASE_SCHEMA: z.string().default("public"),
 });
 

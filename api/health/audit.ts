@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "http";
 
 import { enforceCors } from "../../src/lib/cors.js";
+import { verifyBearerRequest } from "../../src/lib/bearer-auth.js";
 import { getRuntimeEnv } from "../../src/lib/env.js";
 import { getDomainSchema, SUPABASE_SCHEMA } from "../../src/lib/supabase.js";
 
@@ -21,9 +22,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return;
     }
 
-    if (!isAuthorized(req, env.AUDIT_CRON_SECRET)) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Unauthorized", requestId }));
+    const auth = verifyBearerRequest(req, env.AUDIT_CRON_SECRET);
+    if (!auth.authorized) {
+      res.writeHead(auth.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: auth.status === 503 ? "Service unavailable" : "Unauthorized", requestId }));
       return;
     }
 
@@ -69,19 +71,7 @@ async function runHealthChecks(env: ReturnType<typeof getRuntimeEnv>) {
     schema: SUPABASE_SCHEMA,
     organizationId: env.MCP_ORGANIZATION_ID ? "set" : "missing",
     emailEnabled: env.AUDIT_EMAIL_ENABLED,
-    dedupeMinutes: env.AUDIT_EMAIL_DEDUPE_MINUTES,
   };
-}
-
-function isAuthorized(req: IncomingMessage, expectedSecret: string | undefined): boolean {
-  const expected = expectedSecret?.trim();
-  if (!expected) {
-    return true;
-  }
-
-  const authHeader = req.headers.authorization ?? "";
-  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  return bearer === expected;
 }
 
 function getRequestId(req: IncomingMessage): string {

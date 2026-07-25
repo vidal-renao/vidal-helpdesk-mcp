@@ -13,9 +13,10 @@ import { prioritizeIncidentSchema, prioritizeIncident } from "./tools/prioritize
 import { suggestSolutionSchema, suggestSolution } from "./tools/suggest-solution.js";
 import { updateTicketStatusSchema, updateTicketStatus } from "./tools/update-ticket-status.js";
 import { generateReportSchema, generateReport } from "./tools/generate-report.js";
+import { getSlaAuditReportSchema, getSlaAuditReport } from "./tools/get-sla-audit-report.js";
 import { enforceCors } from "./lib/cors.js";
+import { verifyBearerRequest } from "./lib/bearer-auth.js";
 import { createValidatedToolHandler } from "./lib/mcp-tool-handler.js";
-import { SUPABASE_SCHEMA } from "./lib/supabase.js";
 
 function createMcpServer() {
   const server = new McpServer({
@@ -72,6 +73,13 @@ function createMcpServer() {
     createValidatedToolHandler(generateReportSchema, generateReport)
   );
 
+  server.tool(
+    "get_sla_audit_report",
+    "Read-only snapshot of currently active tickets with SLA risk detail: compliance %, per-company active-ticket breakdown, VIP risks (company, risk reason, required action, due date), and ordered action items. project_id/project_name are always null — no ticket-to-project relationship exists in this schema.",
+    getSlaAuditReportSchema.shape,
+    createValidatedToolHandler(getSlaAuditReportSchema, getSlaAuditReport)
+  );
+
   return server;
 }
 
@@ -93,6 +101,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       res.end(JSON.stringify({ error: message }));
       return;
     }
+
+    const auth = verifyBearerRequest(req, process.env.MCP_BEARER_TOKEN);
+    if (!auth.authorized) {
+      res.writeHead(auth.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: auth.status === 503 ? "Service unavailable" : "Unauthorized" }));
+      return;
+    }
   }
 
   if (url.pathname === "/" || url.pathname === "/health") {
@@ -100,11 +115,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     res.end(
       JSON.stringify({
         name: "vidal-helpdesk-mcp",
-        version: "2.0.0",
         status: "running",
-        tools: 7,
-        schema: SUPABASE_SCHEMA,
-        org: process.env.MCP_ORGANIZATION_ID ?? "not set",
       })
     );
     return;
