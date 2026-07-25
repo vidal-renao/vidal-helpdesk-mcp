@@ -11,6 +11,11 @@ export type LogFields = {
   durationMs?: number;
   emailSent?: boolean;
   auditRunPersisted?: boolean;
+  auditRunId?: string;
+  providerMessageId?: string | null;
+  idempotencyKey?: string;
+  deliveryOutcome?: string;
+  persistenceConfirmed?: boolean;
 };
 
 export function logInfo(fields: LogFields): void {

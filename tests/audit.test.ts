@@ -22,6 +22,7 @@ vi.mock("../src/lib/audit-runs.js", () => ({
   markDeliveryUnknown: mocks.markDeliveryUnknown,
   normalizeRecipient: (value: string) => value.trim().toLowerCase(),
   getUtcDayPeriod: () => ({ start: new Date("2026-07-21T00:00:00.000Z"), end: new Date("2026-07-22T00:00:00.000Z") }),
+  stablePayloadHash: () => "persisted-hash",
   buildAuditFingerprint: (parts: unknown[]) => parts.map(String).join("|"),
 }));
 
@@ -139,7 +140,9 @@ describe("api/cron/audit", () => {
 
     mocks.buildSlaAuditReport.mockResolvedValue(fakeReport());
     mocks.auditTemplate.mockReturnValue("<html></html>");
-    mocks.claimAuditRunSlot.mockResolvedValue({ claimed: true, id: "run-1", payloadHash: null });
+    mocks.claimAuditRunSlot.mockResolvedValue({
+      claimed: true, id: "run-1", retry: false, payloadHash: null, payloadSnapshot: null, idempotencyKey: null,
+    });
     mocks.markAuditRunSending.mockResolvedValue({ ok: true, payloadHash: "hash" });
     mocks.markAuditRunSent.mockResolvedValue({ ok: true });
     mocks.markAuditRunFailed.mockResolvedValue({ ok: true });
@@ -265,6 +268,8 @@ describe("api/cron/audit", () => {
     mocks.resendSend.mockRejectedValue(new Error("timeout after request upload"));
     const { json } = await callAudit("POST");
     expect(json.emailSkippedReason).toBe("delivery_unknown");
+    expect(json.persistedDeliveryState).toBe("delivery_unknown");
+    expect(json.persistenceConfirmed).toBe(true);
     expect(mocks.markDeliveryUnknown).toHaveBeenCalledWith(
       "run-1",
       "provider_response_unknown",
@@ -276,7 +281,7 @@ describe("api/cron/audit", () => {
   it("does not call Resend again while retrying sent-state persistence", async () => {
     mocks.markAuditRunSent.mockResolvedValue({ ok: false });
     const { json } = await callAudit("POST");
-    expect(json.emailSkippedReason).toBe("delivery_unknown");
+    expect(json.emailSkippedReason).toBe("delivery_state_unconfirmed");
     expect(mocks.markAuditRunSent).toHaveBeenCalledTimes(3);
     expect(mocks.resendSend).toHaveBeenCalledTimes(1);
     expect(mocks.markDeliveryUnknown).toHaveBeenCalledWith(
@@ -290,8 +295,8 @@ describe("api/cron/audit", () => {
   it("rejects a changed payload under the persisted idempotency key", async () => {
     mocks.markAuditRunSending.mockResolvedValue({ ok: false, reason: "payload_conflict", payloadHash: "new" });
     const { res, json } = await callAudit("POST");
-    expect(res.statusCode).toBe(500);
-    expect(json.error).toBe("Stable delivery payload conflict");
+    expect(res.statusCode).toBe(200);
+    expect(json.emailSkippedReason).toBe("pre_provider_failure");
     expect(mocks.resendSend).not.toHaveBeenCalled();
   });
 
@@ -299,12 +304,33 @@ describe("api/cron/audit", () => {
     // claimAuditRunSlot itself owns the failed->pending reclaim logic (tested at
     // the unit level in audit-runs.test.ts); from the service's perspective a
     // reclaimed slot looks identical to a fresh claim.
-    mocks.claimAuditRunSlot.mockResolvedValue({ claimed: true, id: "run-1", payloadHash: null });
+    const snapshot = { from: "audit@example.com", to: "htcpacoxo31@gmail.com", subject: "Stable", html: "<p>stored</p>" };
+    mocks.claimAuditRunSlot.mockResolvedValue({
+      claimed: true,
+      id: "run-1",
+      retry: true,
+      payloadHash: "persisted-hash",
+      payloadSnapshot: snapshot,
+      idempotencyKey: "sla-audit/run-1",
+    });
 
     const { json } = await callAudit("POST");
 
     expect(json.emailSent).toBe(true);
+    expect(mocks.buildSlaAuditReport).not.toHaveBeenCalled();
+    expect(mocks.resendSend).toHaveBeenCalledWith(snapshot, { idempotencyKey: "sla-audit/run-1" });
     expect(mocks.markAuditRunSent).toHaveBeenCalledWith("run-1", "email-123");
+  });
+
+  it("reports sending when neither sent nor delivery_unknown can be persisted", async () => {
+    mocks.markAuditRunSent.mockResolvedValue({ ok: false });
+    mocks.markDeliveryUnknown.mockResolvedValue({ ok: false });
+    const { json } = await callAudit("POST");
+    expect(json.effectiveDeliveryOutcome).toBe("provider_confirmed");
+    expect(json.persistedDeliveryState).toBe("sending");
+    expect(json.persistenceConfirmed).toBe(false);
+    expect(json.manualReconciliationRequired).toBe(true);
+    expect(mocks.resendSend).toHaveBeenCalledTimes(1);
   });
 
   it("skips claiming entirely when AUDIT_EMAIL_ENABLED is false", async () => {

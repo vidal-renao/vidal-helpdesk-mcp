@@ -27,7 +27,7 @@ describe("claimAuditRunSlot", () => {
 
     const result = await claimAuditRunSlot(baseInput);
 
-    expect(result).toEqual({ claimed: true, id: "run-1", payloadHash: null });
+    expect(result).toMatchObject({ claimed: true, id: "run-1", retry: false, payloadHash: null });
     expect(from).toHaveBeenCalledTimes(1);
   });
 
@@ -58,7 +58,7 @@ describe("claimAuditRunSlot", () => {
 
     const result = await claimAuditRunSlot(baseInput);
 
-    expect(result).toEqual({ claimed: true, id: "run-1", payloadHash: null });
+    expect(result).toMatchObject({ claimed: true, id: "run-1", retry: true, payloadHash: null });
     expect(from).toHaveBeenCalledTimes(3);
   });
 
@@ -118,7 +118,7 @@ describe("claimAuditRunSlot", () => {
     const nextDay = { start: new Date("2026-07-22T00:00:00.000Z"), end: new Date("2026-07-23T00:00:00.000Z") };
     const result = await claimAuditRunSlot({ ...baseInput, period: nextDay });
 
-    expect(result).toEqual({ claimed: true, id: "run-2", payloadHash: null });
+    expect(result).toMatchObject({ claimed: true, id: "run-2", retry: false, payloadHash: null });
   });
 
   it("treats a different recipient as an independent slot", async () => {
@@ -129,7 +129,7 @@ describe("claimAuditRunSlot", () => {
 
     const result = await claimAuditRunSlot({ ...baseInput, recipient: "someone-else@example.com" });
 
-    expect(result).toEqual({ claimed: true, id: "run-3", payloadHash: null });
+    expect(result).toMatchObject({ claimed: true, id: "run-3", retry: false, payloadHash: null });
   });
 });
 

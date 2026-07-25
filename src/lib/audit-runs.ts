@@ -11,7 +11,14 @@ export type ClaimAuditRunInput = {
   recipient: string;
 };
 export type ClaimAuditRunResult =
-  | { claimed: true; id: string; payloadHash: string | null }
+  | {
+      claimed: true;
+      id: string;
+      retry: boolean;
+      payloadHash: string | null;
+      payloadSnapshot: DeliveryPayload | null;
+      idempotencyKey: string | null;
+    }
   | { claimed: false; reason: "already_sent" | "in_progress" | "delivery_unknown" | "claim_failed" };
 
 function table() {
@@ -56,15 +63,15 @@ export async function claimAuditRunSlot(input: ClaimAuditRunInput): Promise<Clai
       idempotency_key: null,
       payload_hash: null,
     })
-    .select("id, payload_hash")
+    .select("id, payload_hash, payload_snapshot, idempotency_key")
     .maybeSingle();
   if (!error && inserted) {
-    return { claimed: true, id: inserted.id as string, payloadHash: null };
+    return { claimed: true, id: inserted.id as string, retry: false, payloadHash: null, payloadSnapshot: null, idempotencyKey: null };
   }
   if (error?.code !== "23505") return { claimed: false, reason: "claim_failed" };
 
   const { data: existing, error: fetchError } = await table()
-    .select("id, status, payload_hash")
+    .select("id, status, payload_hash, payload_snapshot, idempotency_key")
     .eq("organization_id", input.organizationId)
     .eq("report_type", input.reportType)
     .eq("reporting_period_start", periodStart)
@@ -79,35 +86,52 @@ export async function claimAuditRunSlot(input: ClaimAuditRunInput): Promise<Clai
     .update({ status: "pending", state_changed_at: new Date().toISOString(), last_error_message: null })
     .eq("id", existing.id as string)
     .eq("status", "failed")
-    .select("id, payload_hash")
+    .select("id, payload_hash, payload_snapshot, idempotency_key")
     .maybeSingle();
   if (reclaimError || !reclaimed) return { claimed: false, reason: "in_progress" };
   return {
     claimed: true,
     id: reclaimed.id as string,
+    retry: true,
     payloadHash: (reclaimed.payload_hash as string | null) ?? null,
+    payloadSnapshot: validSnapshot(reclaimed.payload_snapshot) ? reclaimed.payload_snapshot : null,
+    idempotencyKey: (reclaimed.idempotency_key as string | null) ?? null,
   };
 }
 
-export async function markAuditRunSending(id: string, payload: DeliveryPayload, existingHash: string | null) {
+export async function markAuditRunSending(
+  id: string,
+  payload: DeliveryPayload,
+  existingHash: string | null,
+  preserveSnapshot = false
+) {
   const payloadHash = stablePayloadHash(payload);
   if (existingHash && existingHash !== payloadHash) {
     return { ok: false as const, reason: "payload_conflict" as const, payloadHash };
   }
-  const { data, error } = await table()
-    .update({
+  const fields: Record<string, unknown> = {
       status: "sending",
       idempotency_key: `sla-audit/${id}`,
-      payload_hash: payloadHash,
-      payload_snapshot: payload,
       delivery_attempted_at: new Date().toISOString(),
       state_changed_at: new Date().toISOString(),
-    })
+  };
+  if (!preserveSnapshot) {
+    fields.payload_hash = payloadHash;
+    fields.payload_snapshot = payload;
+  }
+  const { data, error } = await table()
+    .update(fields)
     .eq("id", id)
     .eq("status", "pending")
     .select("id")
     .maybeSingle();
   return { ok: !error && Boolean(data), reason: error ? "database_error" as const : "state_conflict" as const, payloadHash };
+}
+
+function validSnapshot(value: unknown): value is DeliveryPayload {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return ["from", "to", "subject", "html"].every((key) => typeof record[key] === "string");
 }
 
 async function transition(
