@@ -11,15 +11,10 @@ function escapeHtml(value: string): string {
 
 function formatDueDate(iso: string | null): string {
   if (!iso) return "No due date on file";
-  return new Date(iso).toLocaleString("en-CH", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-    timeZoneName: "short",
-  });
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "Invalid due date";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
 }
 
 function renderCompanyRow(company: CompanySummary): string {

@@ -102,7 +102,8 @@ export async function buildSlaAuditReport(
   // `tickets.created_by` has no formal foreign key to `profiles` in this schema
   // (application-level relationship only — see DOMAIN.md), so this is a single
   // batched lookup keyed on the distinct set of requester ids, not a per-ticket
-  // query. Two queries total regardless of ticket count.
+  // query. Total query count is one tickets query, one organization query,
+  // plus ceil(min(distinct requester ids, 1000) / 100) customer queries.
   const requesterIds = Array.from(new Set(tickets.map((t) => t.created_by).filter((id): id is string => Boolean(id))));
   const companyByProfileId = await resolveCustomerInfo(domainSchema, requesterIds);
 
@@ -120,7 +121,7 @@ export async function buildSlaAuditReport(
     .filter((t) => t.vip_risk)
     .sort(compareVipUrgency);
 
-  const sortedTickets = [...normalized].sort((a, b) => ticketNumberOf(a) - ticketNumberOf(b));
+  const sortedTickets = [...normalized].sort(compareTickets);
 
   return {
     generated_at: now.toISOString(),
@@ -248,7 +249,18 @@ function compareVipUrgency(a: SlaAuditTicket, b: SlaAuditTicket): number {
   const bDue = b.due_at ? new Date(b.due_at).getTime() : Number.MAX_SAFE_INTEGER;
   if (aDue !== bDue) return aDue - bDue;
 
-  return ticketNumberOf(a) - ticketNumberOf(b);
+  return compareTickets(a, b);
+}
+
+function compareTickets(a: SlaAuditTicket, b: SlaAuditTicket): number {
+  const numberDiff = ticketNumberOf(a) - ticketNumberOf(b);
+  return numberDiff !== 0 ? numberDiff : compareCodePoints(a.ticket_id, b.ticket_id);
+}
+
+function compareCodePoints(a: string, b: string): number {
+  const left = a.normalize("NFC");
+  const right = b.normalize("NFC");
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function buildCompanySummaries(tickets: SlaAuditTicket[]): CompanySummary[] {
@@ -267,7 +279,7 @@ function buildCompanySummaries(tickets: SlaAuditTicket[]): CompanySummary[] {
 
   const real = Array.from(counts.values())
     .filter((c) => c.company_id !== null)
-    .sort((a, b) => a.company_name.localeCompare(b.company_name))
+    .sort((a, b) => compareCodePoints(a.company_name, b.company_name) || compareCodePoints(a.company_id ?? "", b.company_id ?? ""))
     .map((c) => ({ company_id: c.company_id, company_name: c.company_name, active_ticket_count: c.count }));
 
   const unassigned = counts.get("__unassigned__");

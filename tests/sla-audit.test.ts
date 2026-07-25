@@ -31,11 +31,14 @@ function ticket(overrides: Record<string, unknown>) {
 }
 
 function setupSchemas(tickets: unknown[], customers: unknown[] = [], organization: unknown = { name: "Vidal Lab" }) {
+  const requesterCount = new Set(tickets.map((t: any) => t.created_by).filter(Boolean)).size;
+  const customerBatches = Math.ceil(Math.min(requesterCount, 1000) / 100);
   const domainFrom = createFromQueue([
     { table: "tickets", query: createQuery({ data: tickets, error: null }) },
-    ...(customers.length > 0 || tickets.some((t: any) => t.created_by)
-      ? [{ table: "customers_info", query: createQuery({ data: customers, error: null }) }]
-      : []),
+    ...Array.from({ length: customerBatches }, (_, index) => ({
+      table: "customers_info",
+      query: createQuery({ data: customers.slice(index * 100, index * 100 + 100), error: null }),
+    })),
   ]);
   const publicFrom = createFromQueue([{ table: "organizations", query: createQuery({ data: organization, error: null }) }]);
 
@@ -193,5 +196,37 @@ describe("buildSlaAuditReport", () => {
     const report = await buildSlaAuditReport("org-123", now, period);
 
     expect(report.tickets.map((t) => t.ticket_reference)).toEqual(["TK-0001", "TK-0002", "TK-0003"]);
+  });
+
+  it("uses deterministic tie-breakers independent of input order and Unicode composition", async () => {
+    const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
+    const rows = [
+      ticket({ id: "ticket-b", ticket_number: 7, title: "Cafe\u0301", priority: "high", sla_breached: true, created_by: "profile-b" }),
+      ticket({ id: "ticket-a", ticket_number: 7, title: "Café", priority: "high", sla_breached: true, created_by: "profile-a" }),
+    ];
+    setupSchemas(rows, [
+      { id: "profile-b", company_name: "Same" },
+      { id: "profile-a", company_name: "Same" },
+    ]);
+    const first = await buildSlaAuditReport("org-123", now, period);
+    setupSchemas([...rows].reverse(), [
+      { id: "profile-a", company_name: "Same" },
+      { id: "profile-b", company_name: "Same" },
+    ]);
+    const second = await buildSlaAuditReport("org-123", now, period);
+    expect(first.tickets.map((t) => t.ticket_id)).toEqual(["ticket-a", "ticket-b"]);
+    expect(second.tickets.map((t) => t.ticket_id)).toEqual(first.tickets.map((t) => t.ticket_id));
+    expect(second.vip_risks.map((t) => t.ticket_id)).toEqual(first.vip_risks.map((t) => t.ticket_id));
+    expect(second.companies).toEqual(first.companies);
+  });
+
+  it("batches at most 100 requester ids and caps lookup work at 1000", async () => {
+    const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
+    const rows = Array.from({ length: 205 }, (_, index) =>
+      ticket({ id: `ticket-${index}`, ticket_number: index, created_by: `profile-${index}` })
+    );
+    const { domainFrom } = setupSchemas(rows);
+    await buildSlaAuditReport("org-123", now, period);
+    expect(domainFrom).toHaveBeenCalledTimes(4); // tickets + 3 customer batches
   });
 });
