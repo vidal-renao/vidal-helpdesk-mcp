@@ -1,159 +1,84 @@
-// src/vercel-server.ts
-// MCP Server via HTTP/SSE — deployable on Vercel
-// Compatible with ticket-system isolated helpdesk schema v2
-
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import type { IncomingMessage, ServerResponse } from "http";
-
-import { createTicketSchema, createTicket } from "./tools/create-ticket.js";
-import { getTicketStatusSchema, getTicketStatus } from "./tools/get-ticket-status.js";
-import { listTicketsSchema, listTickets } from "./tools/list-tickets.js";
-import { prioritizeIncidentSchema, prioritizeIncident } from "./tools/prioritize-incident.js";
-import { suggestSolutionSchema, suggestSolution } from "./tools/suggest-solution.js";
-import { updateTicketStatusSchema, updateTicketStatus } from "./tools/update-ticket-status.js";
-import { generateReportSchema, generateReport } from "./tools/generate-report.js";
-import { getSlaAuditReportSchema, getSlaAuditReport } from "./tools/get-sla-audit-report.js";
-import { enforceCors } from "./lib/cors.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { verifyBearerRequest } from "./lib/bearer-auth.js";
-import { createValidatedToolHandler } from "./lib/mcp-tool-handler.js";
+import { enforceCors } from "./lib/cors.js";
+import { createMcpServer } from "./lib/mcp-server.js";
 
-function createMcpServer() {
-  const server = new McpServer({
-    name: "vidal-helpdesk-mcp",
-    version: "2.0.0",
-  });
-
-  server.tool(
-    "create_ticket",
-    "Create IT support ticket with AI triage. Priority: low/medium/high/critical. Returns TK-XXXX ref.",
-    createTicketSchema.shape,
-    createValidatedToolHandler(createTicketSchema, createTicket)
-  );
-
-  server.tool(
-    "get_ticket_status",
-    'Get ticket details by ref (e.g. "TK-1001") or UUID. Includes SLA, AI analysis, sentiment.',
-    getTicketStatusSchema.shape,
-    createValidatedToolHandler(getTicketStatusSchema, getTicketStatus)
-  );
-
-  server.tool(
-    "list_tickets",
-    "List tickets with optional filters by status and priority.",
-    listTicketsSchema.shape,
-    createValidatedToolHandler(listTicketsSchema, listTickets)
-  );
-
-  server.tool(
-    "prioritize_incident",
-    "Re-run AI triage with new context. Updates priority and ai_analysis if confidence >= 60%.",
-    prioritizeIncidentSchema.shape,
-    createValidatedToolHandler(prioritizeIncidentSchema, prioritizeIncident)
-  );
-
-  server.tool(
-    "suggest_solution",
-    "Generate step-by-step solution in DE/EN/ES/FR/IT. Saves as internal comment.",
-    suggestSolutionSchema.shape,
-    createValidatedToolHandler(suggestSolutionSchema, suggestSolution)
-  );
-
-  server.tool(
-    "update_ticket_status",
-    "Update ticket status with optional internal comment.",
-    updateTicketStatusSchema.shape,
-    createValidatedToolHandler(updateTicketStatusSchema, updateTicketStatus)
-  );
-
-  server.tool(
-    "generate_report",
-    "Generate helpdesk report for today/week/month. SLA compliance, priorities, avg resolution.",
-    generateReportSchema.shape,
-    createValidatedToolHandler(generateReportSchema, generateReport)
-  );
-
-  server.tool(
-    "get_sla_audit_report",
-    "Read-only snapshot of currently active tickets with SLA risk detail: compliance %, per-company active-ticket breakdown, VIP risks (company, risk reason, required action, due date), and ordered action items. project_id/project_name are always null — no ticket-to-project relationship exists in this schema.",
-    getSlaAuditReportSchema.shape,
-    createValidatedToolHandler(getSlaAuditReportSchema, getSlaAuditReport)
-  );
-
-  return server;
-}
-
-const sessions = new Map<string, SSEServerTransport>();
+const MAX_MCP_BODY_BYTES = 1_048_576;
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-
-  if (url.pathname === "/sse" || url.pathname === "/messages") {
-    const methods = url.pathname === "/sse" ? ["GET", "OPTIONS"] : ["POST", "OPTIONS"];
-    try {
-      const cors = enforceCors(req, res, methods);
-      if (!cors.allowed || cors.preflight) {
-        return;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "CORS configuration error";
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: message }));
-      return;
-    }
-
-    const auth = verifyBearerRequest(req, process.env.MCP_BEARER_TOKEN);
-    if (!auth.authorized) {
-      res.writeHead(auth.status, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: auth.status === 503 ? "Service unavailable" : "Unauthorized" }));
-      return;
-    }
-  }
+  const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
   if (url.pathname === "/" || url.pathname === "/health") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        name: "vidal-helpdesk-mcp",
-        status: "running",
-      })
-    );
-    return;
+    return json(res, 200, { name: "vidal-helpdesk-mcp", status: "running" });
   }
 
-  if (url.pathname === "/sse" && req.method === "GET") {
-    const transport = new SSEServerTransport("/messages", res);
-    const server = createMcpServer();
-    const sessionId = transport.sessionId;
-    sessions.set(sessionId, transport);
+  if (url.pathname === "/sse" || url.pathname === "/messages") {
+    return json(res, 410, { error: "Legacy MCP transport retired", endpoint: "/mcp" });
+  }
 
-    res.on("close", () => {
-      sessions.delete(sessionId);
-    });
+  if (url.pathname !== "/mcp") return json(res, 404, { error: "Not found" });
 
+  try {
+    const cors = enforceCors(req, res, ["POST", "OPTIONS"]);
+    if (!cors.allowed || cors.preflight) return;
+  } catch {
+    return json(res, 500, { error: "Service unavailable" });
+  }
+
+  const auth = verifyBearerRequest(req, process.env.MCP_BEARER_TOKEN);
+  if (!auth.authorized) {
+    return json(res, auth.status, { error: auth.status === 503 ? "Service unavailable" : "Unauthorized" });
+  }
+
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST, OPTIONS");
+    return json(res, 405, { error: "Method not allowed" });
+  }
+  if (req.headers["content-type"]?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
+    return json(res, 415, { error: "Content-Type must be application/json" });
+  }
+
+  const body = await readJsonBody(req, res);
+  if (body === undefined) return;
+
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  const server = createMcpServer();
+  try {
     await server.connect(transport);
-    return;
+    await transport.handleRequest(req, res, body);
+  } finally {
+    await transport.close();
+    await server.close();
   }
+}
 
-  if (url.pathname === "/messages" && req.method === "POST") {
-    const sessionId = url.searchParams.get("sessionId");
-    if (!sessionId) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Missing sessionId" }));
-      return;
-    }
-
-    const transport = sessions.get(sessionId);
-    if (!transport) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Session not found" }));
-      return;
-    }
-
-    await transport.handlePostMessage(req, res);
-    return;
+async function readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<unknown | undefined> {
+  const declared = Number(req.headers["content-length"] ?? 0);
+  if (Number.isFinite(declared) && declared > MAX_MCP_BODY_BYTES) {
+    json(res, 413, { error: "Request body too large" });
+    return undefined;
   }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_MCP_BODY_BYTES) {
+      json(res, 413, { error: "Request body too large" });
+      return undefined;
+    }
+    chunks.push(buffer);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    json(res, 400, { jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null });
+    return undefined;
+  }
+}
 
-  res.writeHead(404, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "Not found" }));
+function json(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
 }
