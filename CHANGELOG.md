@@ -2,6 +2,15 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## 2026-07-25 — Local Phase 2 P1 remediation (not deployed)
+
+- Replaced in-memory SSE sessions with stateless authenticated `POST /mcp`.
+- Added conservative Resend classification, immutable snapshot retries and
+  explicit persisted/effective delivery outcomes.
+- Preserved provider evidence before compensation and made output deterministic.
+- Corrected requester identity and made the delivery migration atomic.
+- Workflow ID `294419190` remains `disabled_manually`.
+
 ## 2026-07-25 — Local Phase 1 hardening (not deployed)
 
 - Mandatory remote MCP bearer and fail-closed audit secret.

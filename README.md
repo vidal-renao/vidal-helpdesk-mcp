@@ -42,7 +42,7 @@ The system is designed for Swiss SME expectations around reliability, privacy, a
 |---|---|---|
 | Vercel API | `api/cron/audit.ts` | HTTP transport for scheduled audit execution |
 | MCP stdio | `src/index.ts` | Local MCP entrypoint for desktop or agent clients |
-| MCP HTTP/SSE | `src/vercel-server.ts` | Remote MCP transport deployed on Vercel |
+| MCP Streamable HTTP | `src/vercel-server.ts` | Stateless authenticated `POST /mcp` transport |
 | Business services | `src/lib/audit-service.ts` | Orchestrates the daily audit: claims an idempotency slot, builds the SLA report, sends the email, records the outcome |
 | SLA aggregation | `src/lib/sla-audit.ts` | Shared, read-only computation of compliance %, per-company ticket breakdown, and VIP risks — used by both the audit email and the `get_sla_audit_report` MCP tool |
 | Delivery idempotency | `src/lib/audit-runs.ts` | Atomic claim/sent/failed state machine against `helpdesk.audit_runs`, keyed on (organization, report type, UTC day, recipient) |
@@ -173,7 +173,9 @@ Runtime responsibilities:
 - Send audit email via Resend; only mark the slot `sent` once Resend confirms acceptance (and records its message id). A send failure marks the slot `failed`, which a later invocation is allowed to retry — but never re-sends once a slot is `sent`.
 - Emit structured logs.
 
-The scheduled workflow runs once daily at 06:00 UTC (`.github/workflows/audit.yml`). It was hourly until 2026-07-22; combined with a schema-selection bug in the dedupe table, that produced up to 9 duplicate emails in a single day. Both issues are fixed — see [CHANGELOG.md](CHANGELOG.md).
+The local YAML schedules 06:00 UTC daily. Operationally, GitHub workflow ID
+`294419190` is currently `disabled_manually` and remains off until rollout is
+independently approved.
 
 ## Audit Health Endpoint
 
@@ -224,6 +226,10 @@ Every audit event is written as a single JSON line to `stdout`.
 This format is compatible with Vercel logs, Vercel Log Drains, Datadog pipelines, and SIEM ingestion.
 
 ## MCP Tools
+
+Remote clients migrate from `/sse` plus `/messages` to authenticated Streamable
+HTTP `POST /mcp`. Every request carries `Authorization: Bearer
+<MCP_BEARER_TOKEN>`; CORS is secondary. Legacy routes return 410.
 
 | Tool | Purpose |
 |---|---|

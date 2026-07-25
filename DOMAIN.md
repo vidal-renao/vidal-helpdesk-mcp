@@ -55,7 +55,14 @@ There is no ticket-to-project relationship in this schema. A `projects` table ex
 
 ### AuditRun
 
-`helpdesk.audit_runs` table — note the schema: literal `helpdesk`, not `SUPABASE_SCHEMA` (which is `"public"` in production for everything else). This table is this app's own, exclusively — no other application reads or writes it. One row per `(organization_id, report_type, reporting_period_start, recipient)`, enforced by a unique constraint. `status` is `pending | sent | failed`; a row starts `pending` when a slot is claimed, becomes `sent` once Resend confirms delivery (with `provider_message_id` recorded), or `failed` on any error (retryable by a later invocation). `payload` stores the full `SlaAuditReport` snapshot for that send. See `ARCHITECTURE.md` "Idempotency design" for the claim/reclaim mechanics and `DECISIONS.md` ADR-009 for why this table was extended in place rather than replaced.
+`helpdesk.audit_runs` supports `pending | sending | sent | failed |
+delivery_unknown`; only `failed` is automatically reclaimable. The immutable
+email is stored in `payload_snapshot` and provider evidence in
+`provider_message_id`.
+
+`customer_profile_id` always represents `tickets.created_by`, even without a
+`customers_info` row. `company_id` is a deprecated compatibility alias and is
+null when company assignment is unresolved; it is never a companies-table FK.
 
 ## Business rules encoded in this repo
 

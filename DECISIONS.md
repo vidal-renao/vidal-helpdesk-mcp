@@ -10,7 +10,7 @@ Require distinct MCP/audit bearer secrets and treat CORS as secondary. Use
 unregistered, build-breaking Composio experiment (recoverable in `bb4b9c2`) and
 ignore `.vercel` project metadata.
 
-## ADR-001 — Dual MCP transport (stdio + HTTP/SSE) from one tool set
+## ADR-001 — Dual MCP transport (stdio + remote HTTP) from one tool set
 
 **Decision**: Define the 7 tools once conceptually, but register them separately in `src/index.ts` (stdio) and `src/vercel-server.ts` (SSE), rather than sharing a single server instance.
 **Why**: stdio serves local/desktop MCP clients; SSE serves remote clients through Vercel. MCP's SDK ties a server instance to one transport connection at a time, and Vercel functions are stateless per-invocation, so a fresh `McpServer` is constructed per SSE session in `vercel-server.ts`.
@@ -72,8 +72,28 @@ ignore `.vercel` project metadata.
 
 ## ADR-011 — Company resolution via a batched two-hop application-level join, no migration (2026-07-22)
 
-**Decision**: Resolve each ticket's company as `tickets.created_by → profiles.id → customers_info.id`, via exactly two Supabase queries (the ticket set, then a single batched `customers_info.id IN (...)` lookup) — no new table, no new column, no PostgREST embedded-resource select.
-**Why**: live schema inspection confirmed this relationship already exists and has real data (2 of ~25 profiles), but `tickets.created_by` has no formal foreign key to `profiles`, so PostgREST can't auto-embed it in one query — hence the two-query, in-memory-join approach instead of a single `select=profiles(customers_info(...))`. This is not N+1 (two queries regardless of ticket count), and required zero schema changes.
+**Decision**: Resolve company information in bounded batches of at most 100
+requester IDs. Query count is one tickets query, one organization query, plus
+`ceil(min(distinct requester IDs, 1000) / 100)` customer queries.
+**Why**: bounded batching avoids N+1 behavior without claiming a fixed query
+count.
+
+## ADR-015 — Stateless Streamable HTTP and conservative delivery
+
+Remote MCP creates a sessionless Streamable HTTP transport for each
+authenticated `POST /mcp`; legacy SSE routes return 410. Provider errors are
+ambiguous unless rejection is proven. Retries use the persisted snapshot.
+
+## ADR-016 — Temporary dependency-risk acceptance
+
+**Owner**: repository owner and security lead.
+
+SDK, Resend and Vitest upgrades remain separate from Phase 2 functional
+commits. The workflow stays disabled while production advisories are evaluated.
+
+**Exit condition**: a separate dependency commit passes Node 20 and protocol
+tests and records an advisory-by-advisory fix or time-bounded acceptance for
+every reachable high or critical vulnerability.
 **Consequence**: `company_id` in `get_sla_audit_report`'s output is a `profiles.id`, not a foreign key into a `companies` table (none exists). If `tickets.created_by → profiles` is ever given a real FK constraint, this code doesn't need to change — it doesn't depend on the constraint existing, only on the values being consistent, which they already are.
 
 ## ADR-012 — `project_id`/`project_name` are always `null` — no ticket-to-project relationship exists (2026-07-22)

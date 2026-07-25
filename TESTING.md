@@ -50,7 +50,10 @@ npm run build      # tsc — must succeed after any change
 
 ## What's covered vs. not
 
-Covered: all 8 MCP tool handlers' main success paths, their not-found/error paths, the confidence-threshold gating logic, the audit endpoint's CORS/auth/orchestration behavior, the health endpoint, the SLA aggregation's company grouping/status classification/ordering, the email template's rendering and HTML escaping, and the idempotency claim logic (first-claim-wins, already-sent skip, in-progress skip, failed-row reclaim, stale-pending reclaim, and the race case where a concurrent reclaim attempt loses).
+Covered: all 8 MCP tool handlers, stateless Streamable HTTP, audit
+orchestration, deterministic SLA aggregation, delivery classification and
+claim logic. Only `failed` is reclaimable; `pending`, `sending`, `sent` and
+`delivery_unknown` remain closed.
 
 "Concurrent invocations produce one accepted delivery" is tested at the `claimAuditRunSlot` unit level by asserting the *shape* of the reclaim race (a conditional `UPDATE ... WHERE status = 'failed'` that matches zero rows when another process already won) rather than by spinning up literal concurrent requests — Vitest's mocked Supabase client can't model real Postgres row-locking, so the atomicity guarantee itself rests on the database (a single `UPDATE ... WHERE` statement), not on anything the test can observe directly. Trust the Postgres semantics documented in `ARCHITECTURE.md`, not the test, for that guarantee.
 

@@ -5,11 +5,13 @@
 There is **no end-user authentication** in this repository. Two distinct trust boundaries exist instead:
 
 1. **MCP stdio transport** (`src/index.ts`) — trusted by process boundary. Whoever can spawn this process locally (a desktop MCP client) can call every tool. There is no additional access control layer.
-2. **HTTP/SSE and audit endpoints** (`src/vercel-server.ts`, `api/cron/audit.ts`, `api/health/audit.ts`) — trusted by two independent checks:
+2. **Streamable HTTP and audit endpoints** (`src/vercel-server.ts`, `api/cron/audit.ts`, `api/health/audit.ts`) — trusted by independent bearer and CORS checks:
    - **CORS allowlist** (`src/lib/cors.ts`): the request's `Origin` header must resolve to an entry in `ALLOWED_ORIGINS`. Requests without an origin, or with an origin not on the list, are rejected with `403` before any handler logic runs.
    - **Bearer secrets**: MCP requires `MCP_BEARER_TOKEN`; audit endpoints require the independent `AUDIT_CRON_SECRET`. Missing configuration fails closed.
 
-The MCP tool endpoints served over `/sse` + `/messages` (`src/vercel-server.ts`) have **no bearer-secret option at all** — CORS is the only gate. Anyone whose origin is allowlisted can call any of the 8 tools, including ones that write tickets and comments. This includes `get_sla_audit_report`, which is read-only but surfaces company names (`customers_info.company_name`, `industry`) alongside ticket titles — treat it as exposing the same class of data as `list_tickets`/`generate_report`, gated by the same CORS-only boundary, not a lower-sensitivity endpoint.
+Remote MCP is served only through stateless `POST /mcp` and requires
+`MCP_BEARER_TOKEN` on every request. `/sse` and `/messages` return 410. An
+allowlisted Origin never authorizes a caller by itself.
 
 ## Tenant isolation
 
@@ -45,7 +47,8 @@ From 2026-05-22 to 2026-07-22, `src/lib/audit-runs.ts` read/wrote the audit dedu
 
 ## Rate limiting
 
-None. The CORS allowlist and optional bearer secret are the only request-shaping controls. If this service becomes internet-reachable beyond a small set of trusted origins, add rate limiting before that.
+No distributed rate limiting exists. Mandatory bearer authentication and the
+CORS allowlist are the current request-shaping controls.
 
 ## Dependency posture
 

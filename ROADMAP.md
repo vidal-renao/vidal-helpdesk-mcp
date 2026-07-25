@@ -4,13 +4,15 @@ Status as of 2026-07-22. Items move down this list as they're actually built —
 
 ## Implemented
 
-- 8 MCP tools (create/get/list/prioritize/suggest-solution/update-status/generate-report/get-sla-audit-report) over stdio and HTTP/SSE.
+- 8 MCP tools over stdio and stateless Streamable HTTP `POST /mcp`.
 - AI triage (category, priority, sentiment, language, PII flag, smart response) and multilingual solution generation via Anthropic Claude.
 - Confidence-gated priority application (>= 60%) on both ticket creation and re-prioritization.
 - Read-only SLA audit report (`get_sla_audit_report`, `src/lib/sla-audit.ts`): per-company active-ticket breakdown (company resolved via `tickets.created_by → profiles → customers_info`), three-way SLA status (compliant/at_risk/breached), VIP risks with deterministic risk reasons and required actions, ordered action items. `project_id`/`project_name` are always `null` — no ticket-to-project relationship exists in this schema (confirmed 2026-07-22).
-- Scheduled once-daily SLA audit (GitHub Actions, 06:00 UTC → Vercel → Supabase → Resend), with atomic per-UTC-day delivery idempotency (`helpdesk.audit_runs`: pending/sent/failed state machine, retryable on failure, never re-sends once sent) — replaces the earlier hourly cron and fingerprint-based dedupe that together caused 9 duplicate emails on 2026-07-21.
+- Local daily SLA schedule at 06:00 UTC; the remote workflow is currently
+  `disabled_manually`. Five delivery states are supported and only `failed` is
+  automatically reclaimable.
 - Daily audit email redesigned: companies list, VIP risks with company/project/reference/risk/action/due-date, priority actions, explicit empty states, HTML-escaped untrusted content.
-- CORS allowlist enforcement and optional bearer-secret auth on all HTTP surfaces.
+- Mandatory MCP bearer authentication, with CORS as secondary defense.
 - Structured JSON logging on every audit event.
 - Full Vitest coverage: 66 tests across 13 files, including the idempotency claim/reclaim logic and SLA aggregation.
 - Documentation/guardrail set: `AGENTS.md`, `ARCHITECTURE.md`, `SECURITY.md`, `DOMAIN.md`, `TESTING.md`, `DECISIONS.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `supabase/migrations/`.
@@ -30,7 +32,7 @@ Status as of 2026-07-22. Items move down this list as they're actually built —
 ## Medium term
 
 - Pin or version-gate the Anthropic model id (`claude-sonnet-4-20250514`) instead of hardcoding a dated snapshot — add an env override with the current value as default, so a future model swap doesn't require a code change.
-- Move SSE session state (`vercel-server.ts`'s in-memory `Map`) to an external store if this ever needs to run at more than one concurrent Vercel instance.
+- Reassess persistent MCP sessions only if future capabilities cannot operate statelessly.
 - Add rate limiting to the HTTP surfaces if they become reachable from more than a small set of trusted origins.
 - If a genuine ticket-to-project relationship is ever needed (see `DOMAIN.md`), that requires a real schema decision in the owning "ticket-system" application — not a workaround here. Don't retrofit the existing (unrelated) `projects` deployment-registry table into ticket data.
 - Add a formal FK constraint on `tickets.created_by → profiles.id` in the owning schema if the ticket-system app ever wants PostgREST to auto-embed that relationship — today it's application-level only, which is why company resolution is a batched two-query join rather than a single embedded select (see `DECISIONS.md` ADR-011).

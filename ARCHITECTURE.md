@@ -2,7 +2,9 @@
 
 ## Overview
 
-`vidal-helpdesk-mcp` is a TypeScript/Node service with two runtime surfaces sharing one source tree: an MCP tool server and a scheduled SLA-audit function. It has no UI and no auth of its own — it is a backend automation layer over a Supabase schema (project "Ticket System", `focgfmhgfmhmcbywwsej`) owned by another application. This repo does not carry a migration framework, but as of 2026-07-22 it does track the SQL for the one schema change it has needed in `supabase/migrations/` (see below) — that's a record of intent, not a runnable migration pipeline.
+`vidal-helpdesk-mcp` is a TypeScript/Node service with two runtime surfaces:
+an MCP tool server and a scheduled SLA-audit function. Remote MCP requires
+Bearer authentication; stdio trusts the local process boundary.
 
 ```mermaid
 flowchart TD
@@ -13,7 +15,7 @@ flowchart TD
 
   subgraph vidal-helpdesk-mcp
     Stdio[src/index.ts — stdio MCP transport]
-    SSE[src/vercel-server.ts — HTTP/SSE MCP transport]
+    HTTP[src/vercel-server.ts — stateless Streamable HTTP]
     Cron[api/cron/audit.ts]
     Health[api/health/audit.ts]
     Tools[src/tools/*.ts — 8 MCP tools]
@@ -33,10 +35,10 @@ flowchart TD
   end
 
   Desktop -->|stdio| Stdio
-  Desktop -->|HTTPS + CORS| SSE
+  Desktop -->|POST /mcp + Bearer + CORS| HTTP
   GHA -->|POST + Bearer + Origin, once daily| Cron
   Stdio --> Tools
-  SSE --> CORS --> Tools
+  HTTP --> CORS --> Tools
   Tools --> AI --> Anthropic
   Tools --> DB --> Supabase
   Tools --> SlaAudit
@@ -55,14 +57,14 @@ flowchart TD
 | Layer | Path | Responsibility |
 |---|---|---|
 | MCP stdio entrypoint | `src/index.ts` | Registers all 8 tools, validates required env vars at boot, connects a `StdioServerTransport`. Used by local/desktop MCP clients. |
-| MCP HTTP/SSE entrypoint | `src/vercel-server.ts` | Same 8 tools, served over `/sse` + `/messages` on Vercel. Re-implements CORS + routing by hand (raw `http` module, no framework). Session state is an in-memory `Map<sessionId, SSEServerTransport>` — **not durable across serverless invocations**, see Known Limitations. |
+| MCP Streamable HTTP entrypoint | `src/vercel-server.ts` | Eight tools over stateless authenticated `POST /mcp`; a fresh server and transport are created per request. |
 | Tool handlers | `src/tools/*.ts` | One file per tool. Each exports a Zod schema and an async handler that talks to Supabase (and, for triage tools, Anthropic). `get-sla-audit-report.ts` is read-only and delegates to `sla-audit.ts`. |
 | Tool wiring | `src/lib/mcp-tool-handler.ts` | Wraps a handler with Zod parsing; malformed input returns a structured `{success:false, issues:[...]}` payload instead of throwing. |
 | AI triage | `src/lib/ai.ts` | Two Anthropic calls: `triageTicket` (category/priority/sentiment/summary/smart-response) and `generateSolution` (multilingual step-by-step fix). Model is hardcoded to `claude-sonnet-4-20250514`. |
 | Supabase access | `src/lib/supabase.ts` | Builds a single cached service-role client. `SUPABASE_SCHEMA` selects which schema ticket-domain tools read/write (defaults to `public`, matching production). `getHelpdeskSchema()` always targets the literal `helpdesk` schema regardless of `SUPABASE_SCHEMA` — that's where `audit_runs` actually lives (see below). Exposes `resolveCategoryId` for slug lookups. |
 | Runtime env validation | `src/lib/env.ts` | Zod schema over `process.env`, parsed fresh on every call (not cached at import time) so env changes are picked up without a restart in dev. |
 | CORS | `src/lib/cors.ts` | Deny-by-default allowlist keyed on normalized `Origin` header. Used by both `vercel-server.ts` and the `api/*` functions. |
-| SLA aggregation | `src/lib/sla-audit.ts` | Read-only. Queries active tickets for the org, resolves each requester's company via a batched `customers_info` lookup (two queries total, not N+1), classifies each ticket's SLA status, and builds the company/VIP-risk/action-item breakdown. Used by both `audit-service.ts` (email) and the `get_sla_audit_report` tool — one aggregation, two consumers. |
+| SLA aggregation | `src/lib/sla-audit.ts` | One tickets query, one organization query and up to ten customer batches of 100 IDs; deterministic aggregation feeds both email and MCP. |
 | Delivery idempotency | `src/lib/audit-runs.ts` | `claimAuditRunSlot` / `markAuditRunSent` / `markAuditRunFailed` against `helpdesk.audit_runs`. See "Idempotency design" below. |
 | Audit service | `src/lib/audit-service.ts` | Orchestrates one audit run: skip if disabled, claim the slot, build the SLA report, render + send the email, record the outcome. |
 | Audit endpoints | `api/cron/audit.ts`, `api/health/audit.ts` | Vercel functions. Both require an allowlisted `Origin` and mandatory `AUDIT_CRON_SECRET`. `health` never sends email. |
@@ -85,7 +87,10 @@ tickets.created_by  -- a profile id, unconstrained
       → customers_info.company_name / industry / tax_id
 ```
 
-`src/lib/sla-audit.ts` resolves this with exactly two queries regardless of ticket count: one for the active tickets, one batched `customers_info.id IN (...)` lookup over the distinct set of requester ids found in the first query. A ticket whose requester has no `customers_info` row (most of them, today — only 2 of ~25 profiles have one) resolves to `company_id: null, company_name: null`, and is grouped under an explicit "Unassigned" bucket rather than dropped.
+`src/lib/sla-audit.ts` uses one tickets query, one organization query and
+`ceil(min(distinct requester IDs, 1000) / 100)` customer queries. Missing
+`customers_info` leaves company assignment unresolved without erasing
+`customer_profile_id`.
 
 ### Project — confirmed absence, not an omission
 
@@ -115,7 +120,7 @@ Vercel routes (`vercel.json`) three separate functions from one repo:
 
 - `/api/cron/audit` → `api/cron/audit.ts`
 - `/api/health/audit` → `api/health/audit.ts`
-- everything else → `src/vercel-server.ts` (the MCP HTTP/SSE catch-all)
+- everything else → `src/vercel-server.ts` (root, health, `/mcp`, and legacy 410 handling)
 
 GitHub Actions (`.github/workflows/audit.yml`) hits `/api/cron/audit` once daily at 06:00 UTC with a bearer secret; `.github/workflows/ci.yml` runs lint/test/build on every PR and push to `main`/`master`.
 
@@ -123,7 +128,7 @@ GitHub Actions (`.github/workflows/audit.yml`) hits `/api/cron/audit` once daily
 
 - **SSE session map is per-process memory.** On Vercel's serverless model, a new invocation can land on a different instance than the one holding the `sessions` Map, breaking multi-message SSE sessions under scale-out. Fine for low-concurrency use; would need an external session store to scale.
 - **Single fixed org per deployment**, not a multi-tenant request-scoped model — see `AGENTS.md` and `DOMAIN.md`.
-- **No rate limiting** on the HTTP surfaces beyond the CORS allowlist and optional bearer secret.
+- **No distributed rate limiting** beyond mandatory bearer authentication and CORS.
 
 ## Phase 1 security and delivery model
 

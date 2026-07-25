@@ -8,14 +8,14 @@ This file governs how any AI coding agent (Claude Code or otherwise) should work
 
 Two runtime surfaces ship from the same source tree:
 
-1. **MCP tool server** — 8 tools (`create_ticket`, `get_ticket_status`, `list_tickets`, `prioritize_incident`, `suggest_solution`, `update_ticket_status`, `generate_report`, `get_sla_audit_report`) exposed over stdio (`src/index.ts`, for local/desktop MCP clients) and over HTTP/SSE (`src/vercel-server.ts`, deployed on Vercel).
+1. **MCP tool server** — 8 tools exposed over stdio and stateless Streamable HTTP `POST /mcp`.
 2. **Audit cron runtime** — `api/cron/audit.ts`, triggered daily at 06:00 UTC by `.github/workflows/audit.yml`, computes SLA compliance and emails a report via Resend.
 
 ## Non-negotiable architectural facts
 
 - **Single-tenant per deployment.** `MCP_ORGANIZATION_ID` is one fixed env var, read at call time. There is no per-request tenant/user identity — the "organization scoping" (`.eq("organization_id", ...)`) in every query exists to defend against cross-tenant leakage *if* the schema is ever shared, not to serve multiple orgs from one deployment. Do not build multi-tenant features on top of this without first changing how tenant identity is established.
 - **Service-role Supabase access, everywhere.** `src/lib/supabase.ts` uses `SUPABASE_SERVICE_ROLE_KEY`, which bypasses RLS entirely. Every query's org-scoping is enforced in application code, not the database. If you add a new query against `tickets`, `ai_analysis`, `ticket_comments`, or `categories`, it **must** filter by `organization_id` (directly or via a ticket already scoped by it) — there is no safety net below the application layer.
-- **CORS is the perimeter for the HTTP surfaces.** `src/lib/cors.ts` denies by default; an origin must be present in `ALLOWED_ORIGINS`. Do not add a wildcard or a bypass.
+- **Bearer authentication is the MCP perimeter.** CORS denies by default but is only a secondary browser defense.
 - **Zod validates twice**: once for runtime env (`src/lib/env.ts`), once per MCP tool input (`*Schema` in each `src/tools/*.ts`, wrapped by `src/lib/mcp-tool-handler.ts`). New tools must define a schema and route through `createValidatedToolHandler`.
 - **`src/index.ts` and `src/vercel-server.ts` duplicate the tool registration list.** If you add, remove, or change a tool, update both files — there is no shared registration table today.
 
@@ -62,5 +62,6 @@ There is no lint config beyond the TypeScript compiler (`tsc --noEmit` is litera
 
 ## Phase 1 override
 
-Audit is daily at 06:00 UTC. Remote MCP requires `MCP_BEARER_TOKEN` on `/sse`
-and every `/messages` request. CORS is secondary, never authentication.
+The local Audit YAML is daily at 06:00 UTC; workflow ID `294419190` is
+operationally `disabled_manually`. Remote MCP requires `MCP_BEARER_TOKEN` on
+every `POST /mcp`. Legacy `/sse` and `/messages` return 410.
