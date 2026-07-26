@@ -60,7 +60,6 @@ describe("api/health/audit", () => {
       schema: "public",
       organizationId: "set",
       emailEnabled: true,
-      dedupeMinutes: 120,
     });
   });
 
@@ -69,6 +68,13 @@ describe("api/health/audit", () => {
 
     expect(res.statusCode).toBe(401);
     expect(json.error).toBe("Unauthorized");
+  });
+
+  it("fails closed when the audit secret is not configured", async () => {
+    delete process.env.AUDIT_CRON_SECRET;
+    const { res, json } = await callHealth("GET", "Bearer anything");
+    expect(res.statusCode).toBe(503);
+    expect(json.error).toBe("Service unavailable");
   });
 });
 

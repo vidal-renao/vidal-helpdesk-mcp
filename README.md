@@ -42,27 +42,33 @@ The system is designed for Swiss SME expectations around reliability, privacy, a
 |---|---|---|
 | Vercel API | `api/cron/audit.ts` | HTTP transport for scheduled audit execution |
 | MCP stdio | `src/index.ts` | Local MCP entrypoint for desktop or agent clients |
-| MCP HTTP/SSE | `src/vercel-server.ts` | Remote MCP transport deployed on Vercel |
-| Business services | `src/lib/audit-service.ts` | SLA metric aggregation, audit persistence, and email delivery |
+| MCP Streamable HTTP | `src/vercel-server.ts` | Stateless authenticated `POST /mcp` transport |
+| Business services | `src/lib/audit-service.ts` | Orchestrates the daily audit: claims an idempotency slot, builds the SLA report, sends the email, records the outcome |
+| SLA aggregation | `src/lib/sla-audit.ts` | Shared, read-only computation of compliance %, per-company ticket breakdown, and VIP risks — used by both the audit email and the `get_sla_audit_report` MCP tool |
+| Delivery idempotency | `src/lib/audit-runs.ts` | Atomic claim/sent/failed state machine against `helpdesk.audit_runs`, keyed on (organization, report type, UTC day, recipient) |
 | Runtime validation | `src/lib/env.ts` | Zod validation for environment variables |
 | Security boundary | `src/lib/cors.ts` | Dynamic allowlist CORS enforcement |
 | Observability | `src/lib/logger.ts` | Structured JSON logging for Vercel and log drains |
 | Database access | `src/lib/supabase.ts` | Supabase client and explicit schema helpers |
-| MCP tooling | `src/tools/` | Ticket creation, status, prioritization, solution generation, reporting |
+| MCP tooling | `src/tools/` | Ticket creation, status, prioritization, solution generation, reporting, and the read-only SLA audit report |
 | Tests | `tests/` | Vitest backend coverage with Supabase and Resend mocks |
-| CI/CD | `.github/workflows/` | Strict CI and scheduled audit workflow |
+| CI/CD | `.github/workflows/` | Strict CI and the once-daily scheduled audit workflow |
 
 ## Runtime Flow
 
 ```mermaid
 flowchart LR
-  GHA[GitHub Actions] -->|POST with Origin and Bearer token| API[Vercel /api/cron/audit]
+  GHA[GitHub Actions — once daily] -->|POST with Origin and Bearer token| API[Vercel /api/cron/audit]
   API --> CORS[CORS allowlist]
   API --> ENV[Zod env validation]
   API --> SVC[AuditService.run]
-  SVC --> HD[(Supabase runtime schema)]
-  SVC --> PUB[(Supabase public schema)]
-  SVC --> RESEND[Resend email]
+  SVC --> CLAIM[claimAuditRunSlot — helpdesk.audit_runs]
+  CLAIM -->|claimed| SLA[buildSlaAuditReport]
+  CLAIM -->|already sent / in progress| SKIP[skip, no email]
+  SLA --> HD[(tickets + customers_info)]
+  SLA --> PUB[(organizations)]
+  SLA --> RESEND[Resend email]
+  RESEND --> MARK[markAuditRunSent / markAuditRunFailed]
   SVC --> LOGS[JSON logs]
 ```
 
@@ -83,9 +89,9 @@ ANTHROPIC_API_KEY=sk-ant-your-key
 
 AUDIT_CRON_SECRET=your-audit-cron-secret
 AUDIT_EMAIL_ENABLED=true
-AUDIT_EMAIL_DEDUPE_MINUTES=120
 RESEND_API_KEY=re_your_key
 RESEND_FROM_EMAIL=helpdesk@example.com
+AUDIT_RECIPIENT_EMAIL=ops@example.com
 
 ALLOWED_ORIGINS=https://your-helpdesk-domain.example,https://your-mcp-domain.example
 ```
@@ -160,12 +166,16 @@ Runtime responsibilities:
 
 - Validate `Origin` against `ALLOWED_ORIGINS`.
 - Validate runtime environment variables.
-- Query active tickets from `SUPABASE_SCHEMA`.
+- If `AUDIT_EMAIL_ENABLED=false`, skip entirely — no claim, no query, no email.
+- Atomically claim the delivery slot for `(organization, "sla_daily_audit", current UTC day, recipient)` in `helpdesk.audit_runs`. If a report for this slot was already sent, or another invocation is currently mid-flight, skip without querying ticket data — this is what makes repeated invocations (a stuck-frequent cron, a manual retry, an overlapping serverless invocation) safe. See [DECISIONS.md](DECISIONS.md) for the full idempotency design.
+- Query active tickets from `SUPABASE_SCHEMA`, enrich each with its requester's company (via `customers_info`), and classify SLA status.
 - Query shared organization metadata from the `public` schema.
-- Calculate SLA compliance.
-- Send audit email via Resend.
-- Persist audit run evidence.
+- Send audit email via Resend; only mark the slot `sent` once Resend confirms acceptance (and records its message id). A send failure marks the slot `failed`, which a later invocation is allowed to retry — but never re-sends once a slot is `sent`.
 - Emit structured logs.
+
+The local YAML schedules 06:00 UTC daily. Operationally, GitHub workflow ID
+`294419190` is currently `disabled_manually` and remains off until rollout is
+independently approved.
 
 ## Audit Health Endpoint
 
@@ -191,8 +201,7 @@ This endpoint checks runtime configuration and Supabase connectivity without sen
   "resend": "configured",
   "schema": "public",
   "organizationId": "set",
-  "emailEnabled": true,
-  "dedupeMinutes": 120
+  "emailEnabled": true
 }
 ```
 
@@ -218,6 +227,10 @@ This format is compatible with Vercel logs, Vercel Log Drains, Datadog pipelines
 
 ## MCP Tools
 
+Remote clients migrate from `/sse` plus `/messages` to authenticated Streamable
+HTTP `POST /mcp`. Every request carries `Authorization: Bearer
+<MCP_BEARER_TOKEN>`; CORS is secondary. Legacy routes return 410.
+
 | Tool | Purpose |
 |---|---|
 | `create_ticket` | Create a ticket with AI triage |
@@ -227,8 +240,13 @@ This format is compatible with Vercel logs, Vercel Log Drains, Datadog pipelines
 | `suggest_solution` | Generate multilingual support guidance |
 | `update_ticket_status` | Update lifecycle status and optional internal notes |
 | `generate_report` | Generate helpdesk reporting for today, week, or month |
+| `get_sla_audit_report` | Read-only snapshot of active tickets with SLA risk, per-company breakdown, and VIP risks — the same data the daily audit email is built from |
 
 All MCP tool inputs are validated with Zod before execution.
+
+### `get_sla_audit_report`
+
+Read-only, no input parameters. Returns compliance %, active-ticket count, a per-company active-ticket breakdown (including an explicit "Unassigned" bucket — no ticket is silently dropped), and a `vip_risks` list ordered by urgency (breached first, then soonest due) with a deterministic `risk_reason` and `required_action` per ticket. `project_id`/`project_name` are always `null` — there is no ticket-to-project relationship in this schema (see [DOMAIN.md](DOMAIN.md)). Company resolution is `tickets.created_by → profiles.id → customers_info` (an application-level relationship, not a database foreign key).
 
 ## Production Notes
 
@@ -237,3 +255,9 @@ All MCP tool inputs are validated with Zod before execution.
 - Rotate `AUDIT_CRON_SECRET` and GitHub Actions secrets periodically.
 - Use Vercel production environment variables, not preview defaults, for scheduled workflows.
 - Connect Vercel Log Drains or Datadog before relying on the audit workflow as operational evidence.
+
+## Phase 1 operations
+
+Remote MCP uses `MCP_BEARER_TOKEN`; audit uses separate
+`AUDIT_CRON_SECRET`. Both fail closed. Manual and scheduled runs share the UTC
+day slot and `sla-audit/<audit-run-id>`. Never reset ambiguous states.

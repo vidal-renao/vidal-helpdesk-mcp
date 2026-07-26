@@ -3,7 +3,12 @@ name: Audit
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"
+    # Once daily at 06:00 UTC. Was previously hourly ("0 * * * *"), which combined
+    # with a schema-mismatch bug in the dedupe table (fixed 2026-07-22) caused up
+    # to 9 duplicate emails in a single day. Delivery is also idempotent per UTC
+    # calendar day now (src/lib/audit-runs.ts), so this schedule is redundant with,
+    # not the sole guard against, duplicate sends.
+    - cron: "0 6 * * *"
 
 jobs:
   audit:

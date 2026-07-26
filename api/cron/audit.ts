@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "http";
 
 import { AuditService } from "../../src/lib/audit-service.js";
+import { verifyBearerRequest } from "../../src/lib/bearer-auth.js";
 import { enforceCors } from "../../src/lib/cors.js";
 import { getRuntimeEnv } from "../../src/lib/env.js";
 import { logError } from "../../src/lib/logger.js";
@@ -23,9 +24,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       return;
     }
 
-    if (!isAuthorized(req, env.AUDIT_CRON_SECRET)) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Unauthorized", requestId }));
+    const auth = verifyBearerRequest(req, env.AUDIT_CRON_SECRET);
+    if (!auth.authorized) {
+      res.writeHead(auth.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: auth.status === 503 ? "Service unavailable" : "Unauthorized", requestId }));
       return;
     }
 
@@ -44,25 +46,8 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       message,
     });
     res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        error: message,
-        requestId,
-        stack: error instanceof Error ? error.stack : null,
-      })
-    );
+    res.end(JSON.stringify({ error: message, requestId }));
   }
-}
-
-function isAuthorized(req: IncomingMessage, expectedSecret: string | undefined): boolean {
-  const expected = expectedSecret?.trim();
-  if (!expected) {
-    return true;
-  }
-
-  const authHeader = req.headers.authorization ?? "";
-  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  return bearer === expected;
 }
 
 function getRequestId(req: IncomingMessage): string {
