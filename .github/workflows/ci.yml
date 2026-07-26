@@ -31,3 +31,73 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  postgres-integration:
+    # Exercises the real audit_runs migrations, concurrent claims and the
+    # delivery state machine against a disposable PostgreSQL instance
+    # provisioned entirely inside this GitHub-hosted runner. The
+    # container never touches Supabase or production and is destroyed
+    # unconditionally at the end of the job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate ephemeral database credentials (random, job-scoped, masked from logs)
+        id: creds
+        run: |
+          set -euo pipefail
+          PASSWORD="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9')"
+          echo "::add-mask::$PASSWORD"
+          echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
+
+      - name: Start ephemeral PostgreSQL 17.6 (pinned to match production's major version; loopback-only)
+        env:
+          PG_EPHEMERAL_PASSWORD: ${{ steps.creds.outputs.password }}
+        run: |
+          set -euo pipefail
+          docker run -d --name mcp-ci-postgres \
+            -e POSTGRES_PASSWORD="$PG_EPHEMERAL_PASSWORD" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_DB=postgres \
+            -p 127.0.0.1:5432:5432 \
+            postgres:17.6
+          for _ in $(seq 1 30); do
+            if docker exec mcp-ci-postgres pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::PostgreSQL did not become ready in time"
+          exit 1
+
+      - name: Create the disposable test database (name explicitly identifies it as test/disposable, required by the test's own guard)
+        env:
+          PGPASSWORD: ${{ steps.creds.outputs.password }}
+        run: docker exec -e PGPASSWORD mcp-ci-postgres psql -U postgres -c "CREATE DATABASE vidal_mcp_test;"
+
+      - name: Run the full suite with TEST_DATABASE_URL set -- unskips the real PostgreSQL integration test
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:${{ steps.creds.outputs.password }}@127.0.0.1:5432/vidal_mcp_test?application_name=vidal_mcp_test
+        run: |
+          set -euo pipefail
+          npm test 2>&1 | tee test-output.log
+          if grep -qi "postgres.integration.test.ts.*skipped" test-output.log; then
+            echo "::error::The PostgreSQL integration test was skipped -- TEST_DATABASE_URL wiring is broken"
+            exit 1
+          fi
+          echo "OK: PostgreSQL integration test executed (not skipped)."
+
+      - name: Tear down the ephemeral database container
+        if: always()
+        run: docker rm -f mcp-ci-postgres || true
