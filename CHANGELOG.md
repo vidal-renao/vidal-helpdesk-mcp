@@ -2,6 +2,35 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## 2026-07-28 — Root cause of the silent daily-audit outage: the ledger was unreachable through PostgREST
+
+**Fixed**
+
+- **No daily SLA report was delivered between 2026-07-26 and 2026-07-28, while every scheduled run reported success.** The owner's last real report was 2026-07-25 13:08 CEST — sent by the *previous* deployment. Verified root cause:
+
+  ```text
+  $ curl "$SUPABASE_URL/rest/v1/audit_runs?select=id" -H "Accept-Profile: helpdesk"
+  {"code":"PGRST106","message":"Invalid schema: helpdesk",
+   "hint":"Only the following schemas are exposed: public, omnisciencia, aura_core"}
+  ```
+
+  `src/lib/audit-runs.ts` reached the ledger with `.schema("helpdesk")`, but this project's PostgREST does not expose that schema. Every claim `INSERT` failed with `PGRST106`; `claimAuditRunSlot` special-cases only `23505`, so it collapsed to an opaque `claim_failed`, and the service returned a successful-looking no-op.
+
+  **This is the second failure of the same underlying gap.** The 2026-07-22 entry below "fixed" the duplicate-email incident by repointing `audit-runs.ts` from `SUPABASE_SCHEMA` (`public.audit_runs` — does not exist) to `getHelpdeskSchema()` (`helpdesk.audit_runs` — exists but is not API-reachable). Both are broken; the earlier one merely failed *open*, so emails still went out while dedupe silently did nothing. Commit `17bf9a0` correctly made delivery conditional on a successful claim — which turned a silent dedupe failure into a silent delivery failure. Neither was caught because nothing ever asserted that an email was actually sent.
+
+  Fixed by adding `public.audit_runs`, a `security_invoker`, service_role-only view over the same table (`supabase/migrations/20260728120000_audit_runs_public_view.sql`), and writing through it. See `DECISIONS.md` ADR-017 for why the `helpdesk` schema was *not* simply exposed.
+
+- **HTTP 200 no longer means "an email was sent."** `api/cron/audit.ts` returned 200 for any outcome that did not throw, and `.github/workflows/audit.yml` asserted nothing beyond the status code, so two independent layers each reported success for a total no-op. The endpoint now derives its status from the logical outcome (`src/lib/audit-outcome.ts`: `disabled` → 503, `in_progress` → 409, anything else undelivered → 500), and the workflow independently asserts `emailEnabled === true` and (`emailSent === true` or a verified `already_sent`). The redundancy is deliberate — a regression in either layer alone can no longer go green. See ADR-018.
+
+**Security**
+
+- Revoked `SELECT/INSERT/UPDATE/DELETE/TRUNCATE` on `helpdesk.audit_runs` from `anon` and `authenticated`. These grants were unreachable only because the schema is not exposed — security by obscurity — and directly adjacent to a change that brings this table nearer the API surface. The new view is `service_role`-only and uses `security_invoker` so it cannot bypass the base table's RLS.
+
+**Added**
+
+- `claim_failed` now carries the underlying database error code and is logged at error level, so this failure class is diagnosable from one log line.
+- Regression tests: `tests/audit-outcome.test.ts` (13 cases, every logical outcome incl. fail-closed on unknown reasons), the exact `PGRST106` claim path in `tests/audit-runs.test.ts`, HTTP-status assertions per outcome in `tests/audit.test.ts`, and real-PostgreSQL coverage in `tests/postgres.integration.test.ts` proving the view is insertable/updatable, that writes land in the base table, that `23505` still fires through it, and that `anon`/`authenticated` can read neither relation.
+
 ## 2026-07-25 — Local Phase 2 P1 remediation (not deployed)
 
 - Replaced in-memory SSE sessions with stateless authenticated `POST /mcp`.

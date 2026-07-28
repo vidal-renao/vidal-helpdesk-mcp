@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getHelpdeskSchema } from "./supabase.js";
+import { getAuditRunsTable } from "./supabase.js";
 
 export type AuditRunStatus = "pending" | "sending" | "sent" | "failed" | "delivery_unknown";
 export type ReportingPeriod = { start: Date; end: Date };
@@ -19,10 +19,17 @@ export type ClaimAuditRunResult =
       payloadSnapshot: DeliveryPayload | null;
       idempotencyKey: string | null;
     }
-  | { claimed: false; reason: "already_sent" | "in_progress" | "delivery_unknown" | "claim_failed" };
+  | {
+      claimed: false;
+      reason: "already_sent" | "in_progress" | "delivery_unknown" | "claim_failed";
+      // Populated for claim_failed only. The Phase 4A.16 outage stayed invisible
+      // for days precisely because a hard PGRST106 "Invalid schema" error was
+      // collapsed into an opaque claim_failed with no diagnostic attached.
+      errorCode?: string | null;
+    };
 
 function table() {
-  return getHelpdeskSchema().from("audit_runs");
+  return getAuditRunsTable();
 }
 
 export function normalizeRecipient(recipient: string): string {
@@ -68,7 +75,9 @@ export async function claimAuditRunSlot(input: ClaimAuditRunInput): Promise<Clai
   if (!error && inserted) {
     return { claimed: true, id: inserted.id as string, retry: false, payloadHash: null, payloadSnapshot: null, idempotencyKey: null };
   }
-  if (error?.code !== "23505") return { claimed: false, reason: "claim_failed" };
+  if (error?.code !== "23505") {
+    return { claimed: false, reason: "claim_failed", errorCode: error?.code ?? "unknown" };
+  }
 
   const { data: existing, error: fetchError } = await table()
     .select("id, status, payload_hash, payload_snapshot, idempotency_key")
@@ -77,7 +86,9 @@ export async function claimAuditRunSlot(input: ClaimAuditRunInput): Promise<Clai
     .eq("reporting_period_start", periodStart)
     .eq("recipient", recipient)
     .maybeSingle();
-  if (fetchError || !existing) return { claimed: false, reason: "claim_failed" };
+  if (fetchError || !existing) {
+    return { claimed: false, reason: "claim_failed", errorCode: fetchError?.code ?? "row_not_found" };
+  }
   if (existing.status === "sent") return { claimed: false, reason: "already_sent" };
   if (existing.status === "delivery_unknown") return { claimed: false, reason: "delivery_unknown" };
   if (existing.status !== "failed") return { claimed: false, reason: "in_progress" };

@@ -46,19 +46,60 @@ jobs:
 
           echo "HTTP status: $HTTP_CODE"
 
+          echo "::group::Webhook response body"
+          cat "$RESPONSE_BODY" || true
+          echo "::endgroup::"
+
           if [ "$HTTP_CODE" != "200" ]; then
             echo "::group::Webhook response headers"
             sed -E 's/(authorization|cookie|set-cookie):.*/\1: [redacted]/Ig' "$RESPONSE_HEADERS" || true
-            echo "::endgroup::"
-
-            echo "::group::Webhook response body"
-            cat "$RESPONSE_BODY" || true
             echo "::endgroup::"
 
             echo "::error::Remote audit failed with HTTP $HTTP_CODE"
             exit 1
           fi
 
-          echo "::group::Webhook response body"
-          cat "$RESPONSE_BODY" || true
-          echo "::endgroup::"
+          # Phase 4A.16: HTTP 200 alone proved nothing. Between 2026-07-26 and
+          # 2026-07-28 every scheduled run was green while the endpoint returned
+          # {"emailSent":false,"emailSkippedReason":"claim_failed"} and no email
+          # was ever sent. The endpoint now maps a no-op to a non-2xx status, and
+          # this second, independent assertion means a regression on either side
+          # alone can no longer produce a false green.
+          node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+
+            const raw = readFileSync("response_body.txt", "utf8").trim();
+            if (!raw) {
+              console.log("::error::Audit endpoint returned an empty body");
+              process.exit(1);
+            }
+
+            let body;
+            try {
+              body = JSON.parse(raw);
+            } catch {
+              console.log("::error::Audit endpoint returned a body that is not valid JSON");
+              process.exit(1);
+            }
+
+            if (body.emailEnabled !== true) {
+              console.log("::error::Audit email delivery is disabled (emailEnabled is not true)");
+              process.exit(1);
+            }
+
+            const delivered = body.emailSent === true;
+            // already_sent is only reported after the service re-reads the
+            // persisted row and confirms status=sent for this exact
+            // organization/report type/period/recipient idempotency key.
+            const alreadySent = body.emailSkippedReason === "already_sent";
+
+            if (!delivered && !alreadySent) {
+              const reason = body.emailSkippedReason ?? body.deliveryVerdict ?? "unknown";
+              console.log(`::error::Audit run did not deliver an email (reason: ${reason})`);
+              process.exit(1);
+            }
+
+            console.log(delivered
+              ? `OK: email delivered (audit run ${body.auditRun?.id ?? "unknown"})`
+              : "OK: today report was already delivered; idempotency guard held");
+          '

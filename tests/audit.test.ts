@@ -238,8 +238,9 @@ describe("api/cron/audit", () => {
   it("skips a concurrent invocation for the same period while another claim is in progress", async () => {
     mocks.claimAuditRunSlot.mockResolvedValue({ claimed: false, reason: "in_progress" });
 
-    const { json } = await callAudit("POST");
+    const { res, json } = await callAudit("POST");
 
+    expect(res.statusCode).toBe(409);
     expect(json.emailSkippedReason).toBe("in_progress");
     expect(mocks.resendSend).not.toHaveBeenCalled();
   });
@@ -249,7 +250,7 @@ describe("api/cron/audit", () => {
 
     const { res, json } = await callAudit("POST");
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(500);
     expect(json.emailSent).toBe(false);
     expect(json.emailError).toBe("invalid recipient");
     expect(mocks.markAuditRunFailed).toHaveBeenCalledWith("run-1", "sending", "validation_error", "invalid recipient");
@@ -295,9 +296,58 @@ describe("api/cron/audit", () => {
   it("rejects a changed payload under the persisted idempotency key", async () => {
     mocks.markAuditRunSending.mockResolvedValue({ ok: false, reason: "payload_conflict", payloadHash: "new" });
     const { res, json } = await callAudit("POST");
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(500);
     expect(json.emailSkippedReason).toBe("pre_provider_failure");
     expect(mocks.resendSend).not.toHaveBeenCalled();
+  });
+
+  // Phase 4A.16 regression, at the HTTP boundary. This is the exact production
+  // response that three consecutive scheduled runs returned while sending
+  // nothing -- and that the workflow accepted as success purely because the
+  // status line said 200.
+  it("returns 500, not 200, when the ledger is unreachable and nothing was sent", async () => {
+    mocks.claimAuditRunSlot.mockResolvedValue({ claimed: false, reason: "claim_failed", errorCode: "PGRST106" });
+
+    const { res, json } = await callAudit("POST");
+
+    expect(res.statusCode).toBe(500);
+    expect(json.emailSent).toBe(false);
+    expect(json.emailSkippedReason).toBe("claim_failed");
+    expect(json.claimErrorCode).toBe("PGRST106");
+    expect(json.deliveryVerdict).toBe("claim_failed");
+    expect(mocks.buildSlaAuditReport).not.toHaveBeenCalled();
+    expect(mocks.resendSend).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 and advertises emailEnabled=false when audit email is switched off", async () => {
+    process.env.AUDIT_EMAIL_ENABLED = "false";
+
+    const { res, json } = await callAudit("POST");
+
+    expect(res.statusCode).toBe(503);
+    expect(json.emailEnabled).toBe(false);
+    expect(json.emailSkippedReason).toBe("disabled");
+    expect(mocks.resendSend).not.toHaveBeenCalled();
+  });
+
+  it("advertises emailEnabled=true on a successful delivery so callers can assert on it", async () => {
+    const { res, json } = await callAudit("POST");
+
+    expect(res.statusCode).toBe(200);
+    expect(json.emailEnabled).toBe(true);
+    expect(json.deliveryVerdict).toBe("delivered");
+  });
+
+  it.each([
+    ["delivery_unknown", () => mocks.resendSend.mockRejectedValue(new Error("timeout"))],
+    ["delivery_state_unconfirmed", () => mocks.markAuditRunSent.mockResolvedValue({ ok: false })],
+  ])("returns 500 for the %s outcome so the workflow cannot go green on it", async (_label, arrange) => {
+    arrange();
+
+    const { res, json } = await callAudit("POST");
+
+    expect(res.statusCode).toBe(500);
+    expect(json.emailSent).toBe(false);
   });
 
   it("allows a retry after a previous failure to reclaim the slot and succeed", async () => {
@@ -336,8 +386,9 @@ describe("api/cron/audit", () => {
   it("skips claiming entirely when AUDIT_EMAIL_ENABLED is false", async () => {
     process.env.AUDIT_EMAIL_ENABLED = "false";
 
-    const { json } = await callAudit("POST");
+    const { res, json } = await callAudit("POST");
 
+    expect(res.statusCode).toBe(503);
     expect(json.emailSkippedReason).toBe("disabled");
     expect(mocks.claimAuditRunSlot).not.toHaveBeenCalled();
     expect(mocks.buildSlaAuditReport).not.toHaveBeenCalled();
