@@ -23,16 +23,15 @@ export function getSupabaseSchema(schema: SupabaseSchemaName) {
   return getSupabaseClient().schema(schema);
 }
 
-export function getHelpdeskSchema() {
-  return getSupabaseSchema("helpdesk");
-}
-
 /**
- * audit_runs physically lives in the helpdesk schema, but this project's
- * PostgREST only exposes (public, omnisciencia, aura_core). Reaching it with
- * .schema("helpdesk") fails with PGRST106 "Invalid schema", which the claim
- * logic could only report as an opaque claim_failed -- the Phase 4A.16 outage.
- * public.audit_runs is a service_role-only view over the same table, added in
+ * There is deliberately no getHelpdeskSchema() helper any more.
+ *
+ * PostgREST on this project exposes only (public, omnisciencia, aura_core), so
+ * anything routed through .schema("helpdesk") fails at runtime with PGRST106
+ * "Invalid schema" while typechecking and unit-testing perfectly. That is
+ * exactly how the daily audit silently delivered nothing for three days
+ * (ADR-017). audit_runs is now reached through public.audit_runs, a
+ * service_role-only view over the same table added in
  * supabase/migrations/20260728120000_audit_runs_public_view.sql.
  */
 export function getAuditRunsTable() {
@@ -40,8 +39,19 @@ export function getAuditRunsTable() {
 }
 
 export function getDomainSchema() {
-  const schema = SUPABASE_SCHEMA === "public" ? "public" : "helpdesk";
-  return getSupabaseSchema(schema);
+  // Same failure class as ADR-017, one step removed: if SUPABASE_SCHEMA is ever
+  // set to anything but "public", this used to hand back an unexposed schema and
+  // every domain query would fail with PGRST106 one call later, far from the
+  // cause. That configuration is already 100% broken, so refusing it outright is
+  // strictly better than discovering it through a stream of opaque query errors.
+  if (SUPABASE_SCHEMA !== "public") {
+    throw new Error(
+      `SUPABASE_SCHEMA is "${SUPABASE_SCHEMA}", which PostgREST does not expose on this project ` +
+        `(exposed: public, omnisciencia, aura_core). Domain queries would fail with PGRST106. ` +
+        `Expose the schema in the Supabase API settings or reach it through a view in public.`
+    );
+  }
+  return getSupabaseSchema("public");
 }
 
 export function getPublicSchema() {
