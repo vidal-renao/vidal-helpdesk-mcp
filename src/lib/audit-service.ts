@@ -31,13 +31,18 @@ export class AuditService {
     const env = getRuntimeEnv({ requireAuditRuntime: true });
     const organizationId = env.MCP_ORGANIZATION_ID!;
     const recipient = normalizeRecipient(env.AUDIT_RECIPIENT_EMAIL || "htcpacoxo31@gmail.com");
-    if (!env.AUDIT_EMAIL_ENABLED) return skipped(organizationId, "disabled");
+    if (!env.AUDIT_EMAIL_ENABLED) return skipped(organizationId, "disabled", false);
 
     const period = getUtcDayPeriod();
     const claim = await claimAuditRunSlot({ organizationId, reportType: REPORT_TYPE, period, recipient });
     if (!claim.claimed) {
-      event("info", requestId, organizationId, `Claim rejected: ${claim.reason}`);
-      return skipped(organizationId, claim.reason);
+      // claim_failed means the ledger itself is unreachable or misconfigured --
+      // that is an incident, not routine bookkeeping, so it is logged at error
+      // level with the underlying database error code attached (Phase 4A.16).
+      const level = claim.reason === "claim_failed" ? "error" : "info";
+      const detail = claim.errorCode ? ` (db error: ${claim.errorCode})` : "";
+      event(level, requestId, organizationId, `Claim rejected: ${claim.reason}${detail}`);
+      return skipped(organizationId, claim.reason, true, claim.errorCode ?? null);
     }
 
     let report: SlaAuditReport | null = null;
@@ -211,6 +216,7 @@ function result(
       : null,
     auditRun: { id, claimed: true, skippedReason },
     emailSent,
+    emailEnabled: true,
     emailSkippedReason: skippedReason,
     emailError,
     effectiveDeliveryOutcome: operationalState.effectiveDeliveryOutcome,
@@ -220,7 +226,7 @@ function result(
   };
 }
 
-function skipped(organizationId: string, reason: string) {
+function skipped(organizationId: string, reason: string, emailEnabled = true, claimErrorCode: string | null = null) {
   return {
     success: true,
     generatedAt: new Date().toISOString(),
@@ -229,8 +235,10 @@ function skipped(organizationId: string, reason: string) {
     stats: { compliance: 0, totalTickets: 0, companyCount: 0, vipRiskCount: 0 },
     auditRun: { id: null, claimed: false, skippedReason: reason },
     emailSent: false,
+    emailEnabled,
     emailSkippedReason: reason,
     emailError: null,
+    claimErrorCode,
   };
 }
 

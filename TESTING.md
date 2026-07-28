@@ -70,3 +70,38 @@ creates/drops its own schema, and uses two connections. Install optional `pg`.
 - A new or changed tool handler needs at least: one success-path test, one "not found"/empty-result test if the handler has that branch, and one test for any confidence/threshold/branching logic it introduces.
 - A new query added to an existing tool must be reflected in that tool's test mocks — don't let a test pass by coincidence because the mock never asserts the new call happened.
 - Don't add tests that only assert a mock was called with itself (tautological tests) — assert on the actual payload/branch outcome.
+
+## Delivery-outcome regression coverage (Phase 4A.16, 2026-07-28)
+
+The daily audit silently delivered nothing for three days while CI, the Audit
+workflow and the endpoint were all green. The gap was not a missing test of a
+*unit* — every unit behaved as written — but a missing test of the *contract*:
+nothing anywhere asserted that a run had actually sent an email.
+
+What now covers it:
+
+- `tests/audit-outcome.test.ts` — 13 cases over `classifyAuditDelivery`, the
+  single place that decides whether a run counts as delivered. Includes the
+  fail-closed cases: an unknown/absent skip reason, a future skip reason that
+  nobody has thought of yet, and a truthy-but-not-`true` `emailSent`. A skip
+  reason added later cannot silently become a success.
+- `tests/audit-runs.test.ts` — the exact production failure: an insert rejected
+  with `PGRST106 Invalid schema: helpdesk` must return `claim_failed` *with the
+  database error code preserved*, and must not fall through to the reclaim path.
+- `tests/audit.test.ts` — HTTP status per logical outcome at the endpoint
+  boundary (`claim_failed` → 500, `disabled` → 503, `in_progress` → 409,
+  `delivery_unknown`/`delivery_state_unconfirmed` → 500, delivered → 200), plus
+  `emailEnabled` being advertised so callers can assert on it.
+- `tests/postgres.integration.test.ts` — against real PostgreSQL 17.6 in CI (no
+  mocks): the new `public.audit_runs` view is genuinely insertable and
+  updatable, writes through it land in the base table, the `23505` idempotency
+  constraint still fires through it, `service_role` can write it, and neither
+  `anon` nor `authenticated` can read the view *or* the base table. An
+  auto-updatable view is easy to break by accident — a join, a `DISTINCT` or an
+  aggregate silently makes it read-only — so this is asserted, not assumed.
+
+Note on what a test could not have caught: `pgrst.db_schemas` is Supabase
+project configuration, not repository state. No test in this repo can observe
+it. What the tests now guarantee is that the *consequence* — a run that
+delivers nothing — can never again be reported as success by CI, by the
+endpoint, or by the Audit workflow.

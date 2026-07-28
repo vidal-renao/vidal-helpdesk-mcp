@@ -27,6 +27,18 @@ export function getHelpdeskSchema() {
   return getSupabaseSchema("helpdesk");
 }
 
+/**
+ * audit_runs physically lives in the helpdesk schema, but this project's
+ * PostgREST only exposes (public, omnisciencia, aura_core). Reaching it with
+ * .schema("helpdesk") fails with PGRST106 "Invalid schema", which the claim
+ * logic could only report as an opaque claim_failed -- the Phase 4A.16 outage.
+ * public.audit_runs is a service_role-only view over the same table, added in
+ * supabase/migrations/20260728120000_audit_runs_public_view.sql.
+ */
+export function getAuditRunsTable() {
+  return getPublicSchema().from("audit_runs");
+}
+
 export function getDomainSchema() {
   const schema = SUPABASE_SCHEMA === "public" ? "public" : "helpdesk";
   return getSupabaseSchema(schema);

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "http";
 
+import { classifyAuditDelivery } from "../../src/lib/audit-outcome.js";
 import { AuditService } from "../../src/lib/audit-service.js";
 import { verifyBearerRequest } from "../../src/lib/bearer-auth.js";
 import { enforceCors } from "../../src/lib/cors.js";
@@ -32,8 +33,25 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
 
     const payload = await AuditService.run({ requestId });
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ...payload, requestId }, null, 2));
+    const verdict = classifyAuditDelivery(payload);
+
+    // Phase 4A.16: a run that delivered nothing must not answer 200. Callers
+    // (the Audit workflow, uptime checks, a human with curl) previously had no
+    // way to tell a real send apart from a silent no-op.
+    if (!verdict.delivered) {
+      logError({
+        requestId,
+        organizationId,
+        workflow: "audit-cron",
+        httpStatus: verdict.httpStatus,
+        supabaseErrorCode: (payload as { claimErrorCode?: string | null }).claimErrorCode ?? null,
+        resendErrorCode: null,
+        message: `Audit run did not deliver: ${verdict.outcome}`,
+      });
+    }
+
+    res.writeHead(verdict.httpStatus, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ...payload, deliveryVerdict: verdict.outcome, requestId }, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown audit error";
     logError({

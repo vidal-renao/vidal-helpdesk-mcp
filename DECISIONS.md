@@ -113,3 +113,31 @@ every reachable high or critical vulnerability.
 **Decision**: `.github/workflows/audit.yml`'s schedule changed from `"0 * * * *"` (hourly) to `"0 6 * * *"` (06:00 UTC daily).
 **Why**: the workflow and email are both branded "Daily SLA Report" — hourly execution was never the intended cadence, and was a root-cause contributor (alongside the broken dedupe table, ADR-009) to 9 duplicate emails on 2026-07-21. The per-day idempotency claim (ADR-010) makes duplicate sends impossible regardless of cron frequency, but leaving it hourly would still waste ~23 no-op invocations a day.
 **Consequence**: if a future requirement genuinely needs more-than-daily reporting, that's a deliberate product decision requiring a distinct `report_type` (so it doesn't collide with the daily slot's idempotency key) — not a cron-frequency change alone.
+
+## ADR-017 — `audit_runs` is reached through a `public` view, not by exposing the `helpdesk` schema (2026-07-28)
+
+**Context**: between 2026-07-26 21:12 UTC (deployment of the delivery state machine, commit `17bf9a0`) and 2026-07-28, every scheduled Audit run reported success and delivered nothing. The owner's last real report was 2026-07-25 13:08 CEST, sent by the *previous* deployment.
+
+**Root cause** — verified, not inferred:
+
+```
+$ curl "$SUPABASE_URL/rest/v1/audit_runs?select=id" -H "Accept-Profile: helpdesk"
+{"code":"PGRST106","message":"Invalid schema: helpdesk",
+ "hint":"Only the following schemas are exposed: public, omnisciencia, aura_core"}
+```
+
+`src/lib/audit-runs.ts` reached the ledger with `.schema("helpdesk")`, but this Supabase project's PostgREST exposes only `public, omnisciencia, aura_core`. Every claim `INSERT` failed with `PGRST106`; `claimAuditRunSlot` special-cases only `23505`, so it degraded to an opaque `claim_failed`, `AuditService` returned a *successful-looking* no-op, and `api/cron/audit.ts` answered HTTP 200.
+
+**Decision**: add `public.audit_runs`, a `security_invoker`, service_role-only view over `helpdesk.audit_runs`, and write through it. Do **not** add `helpdesk` to `pgrst.db_schemas`.
+
+**Why not expose the schema**: `pgrst.db_schemas` is an instance-wide setting on a Supabase project shared with several unrelated products (`omnisciencia`, `aura_core`, `lumen_invoice`, `cuadrante`); it lives outside git and outside CI; and `anon`/`authenticated` still held blanket `SELECT/INSERT/UPDATE/DELETE/TRUNCATE` on `helpdesk.audit_runs`, so exposing the schema would have published an audit ledger to the public API surface. The same migration revokes those grants — they were unreachable only by obscurity.
+
+**Consequence**: the ledger keeps its `helpdesk` home, its 274 historical rows, its constraints and its idempotency key untouched. `security_invoker = true` is load-bearing: without it the view would execute as its owner and bypass the base table's RLS for anyone able to read it. Rolling the view back makes the endpoint fail closed (`claim_failed`) — it can never produce a duplicate or an unintended send.
+
+## ADR-018 — A run that delivered nothing must not answer HTTP 200 (2026-07-28)
+
+**Decision**: `api/cron/audit.ts` derives its status code from the logical outcome (`src/lib/audit-outcome.ts`), and `.github/workflows/audit.yml` independently asserts the response contract.
+
+**Why**: the outage above was invisible for three days because *two* layers each assumed the other was checking. The endpoint returned 200 for any outcome that did not throw, and the workflow asserted nothing beyond the status line — so `{"emailSent":false,"emailSkippedReason":"claim_failed"}` was a green build. Only two states now count as success: `emailSent === true`, or `already_sent` (which `claimAuditRunSlot` only reports after re-reading the persisted row and confirming `status='sent'` for that exact organization/report-type/period/recipient key — a verified prior delivery, not an assumption). `disabled` → 503, `in_progress` → 409, everything else → 500, including any skip reason added in the future: the classifier fails closed by construction.
+
+**Consequence**: the two checks are deliberately redundant. A regression in either layer alone can no longer produce a false green. `claim_failed` is additionally logged at error level with the underlying database error code attached, so the next occurrence of this failure class is diagnosable from one log line instead of a three-day investigation.

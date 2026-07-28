@@ -101,6 +101,85 @@ describe.skipIf(!connectionString)("PostgreSQL audit-run migrations and concurre
         `select count(*)::int count from ${qSchema}.audit_runs where status in ('sending','delivery_unknown')`
       );
       expect(rollbackBlockers.rows[0].count).toBeGreaterThan(0);
+
+      // ---------------------------------------------------------------------
+      // Phase 4A.16: the PostgREST-reachable view. The production defect was
+      // that the ledger could not be reached through the API at all, so this
+      // asserts against real PostgreSQL that the view the MCP server now writes
+      // through is genuinely insertable, updatable and constraint-preserving --
+      // an auto-updatable view is easy to break accidentally (a join, a
+      // DISTINCT, an aggregate all silently make it read-only).
+      // ---------------------------------------------------------------------
+      for (const role of ["anon", "authenticated", "service_role"]) {
+        await clientA.query(`do $$ begin
+          if not exists (select 1 from pg_roles where rolname = '${role}') then
+            create role ${role} nologin;
+          end if;
+        end $$;`);
+      }
+      await clientA.query(`grant usage on schema ${qSchema} to anon, authenticated, service_role`);
+      await clientA.query(
+        `grant select, insert, update, delete, truncate, references, trigger on ${qSchema}.audit_runs to anon, authenticated`
+      );
+
+      const viewMigration = await readFile("supabase/migrations/20260728120000_audit_runs_public_view.sql", "utf8");
+      await clientA.query(
+        viewMigration
+          .replaceAll("public.audit_runs", `${qSchema}.audit_runs_api`)
+          .replaceAll("helpdesk.audit_runs", `${qSchema}.audit_runs`)
+          // The test schema stands in for both `public` and `helpdesk`, so the
+          // blanket `revoke ... from public` would also strip the grants the
+          // test roles need on the base table; scope it to the view's roles.
+          .replaceAll("from public, anon, authenticated", "from anon, authenticated")
+      );
+
+      // The view must expose exactly the base table's rows.
+      const viaView = await clientA.query(`select count(*)::int count from ${qSchema}.audit_runs_api`);
+      const viaTable = await clientA.query(`select count(*)::int count from ${qSchema}.audit_runs`);
+      expect(viaView.rows[0].count).toBe(viaTable.rows[0].count);
+
+      // It must be genuinely writable: this is the write path production uses.
+      await clientA.query(
+        `insert into ${qSchema}.audit_runs_api
+           (id, organization_id, report_type, reporting_period_start, reporting_period_end, recipient,
+            status, fingerprint, overall_severity, findings_count, payload)
+         values ('via-view','org-view','sla_daily_audit','2026-07-28','2026-07-29','ops@example.com',
+                 'pending','','pending',0,'{}')`
+      );
+      const updatedThroughView = await clientA.query(
+        `update ${qSchema}.audit_runs_api set status='sending' where id='via-view' and status='pending' returning id`
+      );
+      expect(updatedThroughView.rowCount).toBe(1);
+      // ...and the write must actually land in the base table, not a copy.
+      const landed = await clientA.query(`select status from ${qSchema}.audit_runs where id='via-view'`);
+      expect(landed.rows[0].status).toBe("sending");
+
+      // The base table's idempotency constraint must still fire through the view.
+      await expect(
+        clientA.query(
+          `insert into ${qSchema}.audit_runs_api
+             (id, organization_id, report_type, reporting_period_start, reporting_period_end, recipient,
+              status, fingerprint, overall_severity, findings_count, payload)
+           values ('via-view-dup','org-view','sla_daily_audit','2026-07-28','2026-07-29','ops@example.com',
+                   'pending','','pending',0,'{}')`
+        )
+      ).rejects.toMatchObject({ code: "23505" });
+
+      // The audit ledger must not be reachable from a browser role, through the
+      // view or the base table.
+      for (const role of ["anon", "authenticated"]) {
+        for (const relation of ["audit_runs_api", "audit_runs"]) {
+          const readable = await clientA.query(
+            `select has_table_privilege($1, '${qSchema}.${relation}', 'SELECT') granted`,
+            [role]
+          );
+          expect(readable.rows[0].granted, `${role} must not read ${relation}`).toBe(false);
+        }
+      }
+      const serviceRoleCanWrite = await clientA.query(
+        `select has_table_privilege('service_role', '${qSchema}.audit_runs_api', 'INSERT') granted`
+      );
+      expect(serviceRoleCanWrite.rows[0].granted).toBe(true);
     } finally {
       clientA.release();
       clientB.release();

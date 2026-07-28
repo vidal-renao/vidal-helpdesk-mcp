@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createFromQueue, createQuery } from "./helpers/supabase-mock.js";
 
 const mocks = vi.hoisted(() => ({
-  getHelpdeskSchema: vi.fn(),
+  getAuditRunsTable: vi.fn(),
 }));
 
 vi.mock("../src/lib/supabase.js", () => ({
-  getHelpdeskSchema: mocks.getHelpdeskSchema,
+  getAuditRunsTable: mocks.getAuditRunsTable,
 }));
 
 const period = { start: new Date("2026-07-21T00:00:00.000Z"), end: new Date("2026-07-22T00:00:00.000Z") };
@@ -23,7 +23,7 @@ describe("claimAuditRunSlot", () => {
     const { claimAuditRunSlot } = await import("../src/lib/audit-runs.js");
 
     const from = createFromQueue([{ table: "audit_runs", query: createQuery({ data: { id: "run-1" }, error: null }) }]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const result = await claimAuditRunSlot(baseInput);
 
@@ -38,7 +38,7 @@ describe("claimAuditRunSlot", () => {
       { table: "audit_runs", query: createQuery({ data: null, error: { code: "23505", message: "duplicate key" } }) },
       { table: "audit_runs", query: createQuery({ data: { id: "run-1", status: "sent", updated_at: new Date().toISOString() }, error: null }) },
     ]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const result = await claimAuditRunSlot(baseInput);
 
@@ -54,7 +54,7 @@ describe("claimAuditRunSlot", () => {
       { table: "audit_runs", query: createQuery({ data: { id: "run-1", status: "failed", updated_at: new Date().toISOString() }, error: null }) },
       { table: "audit_runs", query: createQuery({ data: { id: "run-1" }, error: null }) },
     ]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const result = await claimAuditRunSlot(baseInput);
 
@@ -69,7 +69,7 @@ describe("claimAuditRunSlot", () => {
       { table: "audit_runs", query: createQuery({ data: null, error: { code: "23505", message: "duplicate key" } }) },
       { table: "audit_runs", query: createQuery({ data: { id: "run-1", status: "pending", updated_at: new Date().toISOString() }, error: null }) },
     ]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const result = await claimAuditRunSlot(baseInput);
 
@@ -85,7 +85,7 @@ describe("claimAuditRunSlot", () => {
       { table: "audit_runs", query: createQuery({ data: null, error: { code: "23505", message: "duplicate key" } }) },
       { table: "audit_runs", query: createQuery({ data: { id: "run-1", status: "pending", updated_at: staleTimestamp }, error: null }) },
     ]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const result = await claimAuditRunSlot(baseInput);
 
@@ -102,7 +102,7 @@ describe("claimAuditRunSlot", () => {
       // process already flipped it to 'pending' first.
       { table: "audit_runs", query: createQuery({ data: null, error: null }) },
     ]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const result = await claimAuditRunSlot(baseInput);
 
@@ -113,7 +113,7 @@ describe("claimAuditRunSlot", () => {
     const { claimAuditRunSlot } = await import("../src/lib/audit-runs.js");
 
     const from = createFromQueue([{ table: "audit_runs", query: createQuery({ data: { id: "run-2" }, error: null }) }]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const nextDay = { start: new Date("2026-07-22T00:00:00.000Z"), end: new Date("2026-07-23T00:00:00.000Z") };
     const result = await claimAuditRunSlot({ ...baseInput, period: nextDay });
@@ -121,11 +121,53 @@ describe("claimAuditRunSlot", () => {
     expect(result).toMatchObject({ claimed: true, id: "run-2", retry: false, payloadHash: null });
   });
 
+  // Phase 4A.16 regression. The audit ledger lives in helpdesk.audit_runs, but
+  // this project's PostgREST only exposes (public, omnisciencia, aura_core), so
+  // reaching it via .schema("helpdesk") returned PGRST106 "Invalid schema" on
+  // every insert. claimAuditRunSlot only special-cases 23505, so it degraded to
+  // an opaque claim_failed with no diagnostic, the service reported a
+  // successful no-op, and three days of daily reports were silently lost.
+  it("reports claim_failed and preserves the database error code when the ledger is unreachable", async () => {
+    const { claimAuditRunSlot } = await import("../src/lib/audit-runs.js");
+
+    const from = createFromQueue([
+      {
+        table: "audit_runs",
+        query: createQuery({
+          data: null,
+          error: { code: "PGRST106", message: "Invalid schema: helpdesk" },
+        }),
+      },
+    ]);
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
+
+    const result = await claimAuditRunSlot(baseInput);
+
+    expect(result).toEqual({ claimed: false, reason: "claim_failed", errorCode: "PGRST106" });
+    // Critically, it must not fall through to the reclaim path and must never
+    // look like a claim that can proceed to a send.
+    expect(from).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports claim_failed with the error code when the post-conflict lookup itself fails", async () => {
+    const { claimAuditRunSlot } = await import("../src/lib/audit-runs.js");
+
+    const from = createFromQueue([
+      { table: "audit_runs", query: createQuery({ data: null, error: { code: "23505", message: "duplicate key" } }) },
+      { table: "audit_runs", query: createQuery({ data: null, error: { code: "42501", message: "permission denied" } }) },
+    ]);
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
+
+    const result = await claimAuditRunSlot(baseInput);
+
+    expect(result).toEqual({ claimed: false, reason: "claim_failed", errorCode: "42501" });
+  });
+
   it("treats a different recipient as an independent slot", async () => {
     const { claimAuditRunSlot } = await import("../src/lib/audit-runs.js");
 
     const from = createFromQueue([{ table: "audit_runs", query: createQuery({ data: { id: "run-3" }, error: null }) }]);
-    mocks.getHelpdeskSchema.mockReturnValue({ from });
+    mocks.getAuditRunsTable.mockImplementation(() => from("audit_runs"));
 
     const result = await claimAuditRunSlot({ ...baseInput, recipient: "someone-else@example.com" });
 
