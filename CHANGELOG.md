@@ -2,6 +2,17 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## 2026-08-01 — Dead-man's switch: the absence of a run is now an alert
+
+**Added**
+
+- **A liveness ping as the final step of `.github/workflows/audit.yml`**, conditional on the response-contract assertion having passed. That assertion (ADR-018) only fires if the run executes and reaches it, so it is blind to the cron never firing — GitHub disables scheduled workflows after 60 days of repository inactivity — to Actions outages, and to the workflow being deleted. Those produce no run, no red build and no signal; the only symptom is a missing email, which is how the 2026-07-26 outage stayed invisible for three days. A healthy delivery now pings an external monitor, and the *absence* of that ping raises the alarm from a system outside this repository. The alerting channel must not be Resend, which is inside the path being watched. Setup, grace-window rationale and the coverage matrix are in `README.md` ("Dead-man's switch"); the independence argument is ADR-019.
+- New repository secret `HC_PING_URL`. The step fails when it is unset: a disarmed monitor reporting success is the anti-pattern ADR-018 exists to eliminate. The ping runs after delivery completes, so a failure here never costs a report.
+
+**Fixed**
+
+- **Documentation claimed the audit workflow was off while it was running daily.** `README.md` and `AGENTS.md` both stated that workflow ID `294419190` was `disabled_manually` and would remain off pending approval. It is `active` and has delivered on every scheduled run through 2026-08-01 (verified against the GitHub API, not inferred). Corrected in both files, with the observed 2–4h queue delay recorded — it is what sets the monitor's grace window.
+
 ## 2026-07-28 — Root cause of the silent daily-audit outage: the ledger was unreachable through PostgREST
 
 **Fixed**
