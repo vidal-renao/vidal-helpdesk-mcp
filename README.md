@@ -119,9 +119,12 @@ If `ALLOWED_ORIGINS` is absent during `npm run build`, the build still succeeds.
 ```bash
 VIDAL_MCP_AUDIT_URL=https://your-vercel-domain.example/api/cron/audit
 VIDAL_MCP_AUDIT_SECRET=your-audit-cron-secret
+HC_PING_URL=https://hc-ping.com/<check-uuid>
 ```
 
 The scheduled audit workflow derives the `Origin` header from `VIDAL_MCP_AUDIT_URL`. That origin must also be present in `ALLOWED_ORIGINS`.
+
+`HC_PING_URL` is the dead-man's switch liveness endpoint (see below). The Audit workflow fails if it is missing, because a disarmed monitor must not look like a healthy one.
 
 ## Local Development
 
@@ -173,9 +176,9 @@ Runtime responsibilities:
 - Send audit email via Resend; only mark the slot `sent` once Resend confirms acceptance (and records its message id). A send failure marks the slot `failed`, which a later invocation is allowed to retry — but never re-sends once a slot is `sent`.
 - Emit structured logs.
 
-The local YAML schedules 06:00 UTC daily. Operationally, GitHub workflow ID
-`294419190` is currently `disabled_manually` and remains off until rollout is
-independently approved.
+The local YAML schedules 06:00 UTC daily. GitHub workflow ID `294419190` is
+`active` and delivering on schedule (verified 2026-08-01); GitHub's queue
+typically starts the run 2–4h after 06:00 UTC.
 
 ## Audit Health Endpoint
 
@@ -204,6 +207,38 @@ This endpoint checks runtime configuration and Supabase connectivity without sen
   "emailEnabled": true
 }
 ```
+
+## Dead-man's switch
+
+The response-contract assertion in `.github/workflows/audit.yml` only fires **if the run executes and reaches it**. It cannot see:
+
+- the cron never firing — GitHub disables scheduled workflows after 60 days of repository inactivity;
+- GitHub Actions being unavailable;
+- the workflow being deleted or broken before the assertion.
+
+In each case there is no run, no red build and no signal at all: the outage announces itself only as an email that never arrives, which is precisely how the 2026-07-26 → 2026-07-28 incident stayed invisible for three days. The dead-man's switch converts that silence into an alert.
+
+**How it works.** The last step of the audit job pings an external monitor, and runs only on a healthy delivery — steps after the assertion's `exit 1` never execute. A missing ping, from any cause, is the alarm. The alerting service is deliberately outside this repository, outside GitHub and outside Resend: a detector that shares a failure mode with the thing it watches is not a detector.
+
+**Manual setup** (once, outside this repository):
+
+1. Create a check on [healthchecks.io](https://healthchecks.io) with **Period = 1 day** and **Grace = 6h**.
+2. Copy its ping URL (`https://hc-ping.com/<uuid>`) into the repository secret `HC_PING_URL`.
+3. Configure the notification channel — an alternative mailbox, Slack or WhatsApp. **It must not be Resend**, which is part of the delivery path being watched. Verify it with the service's own test button.
+
+Grace is 6h, not 4h, because the scheduled run does not start at 06:00 UTC: GitHub's queue delays it. Observed starts between 2026-07-27 and 2026-08-01 range from 08:30 to 10:04 UTC (2h30m–4h05m late), so two consecutive runs can legitimately sit almost 28h apart. A 6h grace gives a 30h window — still far below the ~46h gap a genuinely missed day produces, so nothing is lost in detection while false alarms are eliminated.
+
+**Coverage:**
+
+| Failure | Ping | Result |
+|---|---|---|
+| Cron stops firing / workflow disabled by GitHub | none | alert |
+| GitHub Actions unavailable | none | alert |
+| Endpoint 5xx, `claim_failed`, or any other no-op delivery | none (assertion exits first) | alert |
+| `HC_PING_URL` secret removed | none | alert |
+| Healthy delivery (`emailSent` or verified `already_sent`) | sent | silence |
+
+The one case this does not cover is the monitoring account itself being deleted or its notification channel silently breaking — verify the channel with a test ping when rotating secrets.
 
 ## Structured Logging
 

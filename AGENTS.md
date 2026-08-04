@@ -62,6 +62,9 @@ There is no lint config beyond the TypeScript compiler (`tsc --noEmit` is litera
 
 ## Phase 1 override
 
-The local Audit YAML is daily at 06:00 UTC; workflow ID `294419190` is
-operationally `disabled_manually`. Remote MCP requires `MCP_BEARER_TOKEN` on
-every `POST /mcp`. Legacy `/sse` and `/messages` return 410.
+The local Audit YAML is daily at 06:00 UTC; workflow ID `294419190` is `active`
+and delivering (verified 2026-08-01 — this file previously claimed
+`disabled_manually`, which was stale). Its final step is a dead-man's-switch
+liveness ping that must stay last and must stay conditional on a healthy
+delivery. Remote MCP requires `MCP_BEARER_TOKEN` on every `POST /mcp`. Legacy
+`/sse` and `/messages` return 410.

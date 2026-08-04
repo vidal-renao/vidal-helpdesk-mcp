@@ -103,3 +103,36 @@ jobs:
               ? `OK: email delivered (audit run ${body.auditRun?.id ?? "unknown"})`
               : "OK: today report was already delivered; idempotency guard held");
           '
+
+      # Dead-man's switch. The contract assertion above only fires if this run
+      # executes and reaches it; it cannot detect the cron never firing (GitHub
+      # disables scheduled workflows after 60 days of repository inactivity),
+      # GitHub Actions being down, or this workflow being deleted. In all three
+      # cases there is no run, no red, and nothing to notice.
+      #
+      # This step emits a liveness ping only on a healthy delivery — the step
+      # after `exit 1` never runs — so the absence of a ping is the signal, and
+      # an external service (healthchecks.io) raises the alarm. The alerting
+      # channel must not be Resend: Resend is part of what is being watched.
+      # Setup and coverage matrix: README.md, "Dead-man's switch".
+      - name: Heartbeat (dead-man's switch)
+        if: success()
+        shell: bash
+        env:
+          HC_PING_URL: ${{ secrets.HC_PING_URL }}
+        run: |
+          set -u
+
+          if [ -z "${HC_PING_URL}" ]; then
+            echo "::error::HC_PING_URL secret is empty or not configured; the dead-man's switch is disarmed"
+            exit 1
+          fi
+
+          # Fail the job if the ping does not land: a monitor that silently
+          # stopped being fed is the failure mode this whole step exists for.
+          curl --fail --silent --show-error \
+            --retry 3 --retry-connrefused --max-time 10 \
+            --output /dev/null \
+            "${HC_PING_URL}"
+
+          echo "OK: liveness ping delivered"
