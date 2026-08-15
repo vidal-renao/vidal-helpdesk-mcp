@@ -52,7 +52,7 @@ async function runHealthChecks(env: ReturnType<typeof getRuntimeEnv>) {
 
   try {
     const { error } = await getDomainSchema()
-      .from("tickets")
+      .from("hd_tickets")
       .select("id", { count: "exact", head: true })
       .limit(1);
     if (error) {

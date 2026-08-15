@@ -34,9 +34,9 @@ function setupSchemas(tickets: unknown[], customers: unknown[] = [], organizatio
   const requesterCount = new Set(tickets.map((t: any) => t.created_by).filter(Boolean)).size;
   const customerBatches = Math.ceil(Math.min(requesterCount, 1000) / 100);
   const domainFrom = createFromQueue([
-    { table: "tickets", query: createQuery({ data: tickets, error: null }) },
+    { table: "hd_tickets", query: createQuery({ data: tickets, error: null }) },
     ...Array.from({ length: customerBatches }, (_, index) => ({
-      table: "customers_info",
+      table: "hd_customers_info",
       query: createQuery({ data: customers.slice(index * 100, index * 100 + 100), error: null }),
     })),
   ]);

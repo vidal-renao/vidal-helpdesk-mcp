@@ -55,8 +55,8 @@ describe("createTicket", () => {
     const ticketsQuery = createQuery({ data: ticketRow, error: null });
     const aiAnalysisQuery = createQuery({ data: null, error: null });
     const from = createFromQueue([
-      { table: "tickets", query: ticketsQuery },
-      { table: "ai_analysis", query: aiAnalysisQuery },
+      { table: "hd_tickets", query: ticketsQuery },
+      { table: "hd_ai_analysis", query: aiAnalysisQuery },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
     mocks.resolveCategoryId.mockResolvedValue("category-1");
@@ -100,8 +100,8 @@ describe("createTicket", () => {
     const ticketsQuery = createQuery({ data: ticketRow, error: null });
     const aiAnalysisQuery = createQuery({ data: null, error: null });
     const from = createFromQueue([
-      { table: "tickets", query: ticketsQuery },
-      { table: "ai_analysis", query: aiAnalysisQuery },
+      { table: "hd_tickets", query: ticketsQuery },
+      { table: "hd_ai_analysis", query: aiAnalysisQuery },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
     mocks.resolveCategoryId.mockResolvedValue(null);

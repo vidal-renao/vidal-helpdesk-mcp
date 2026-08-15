@@ -57,9 +57,9 @@ describe("prioritizeIncident", () => {
     const updateQuery = createQuery({ data: null, error: null });
     const upsertQuery = createQuery({ data: null, error: null });
     const from = createFromQueue([
-      { table: "tickets", query: selectQuery },
-      { table: "tickets", query: updateQuery },
-      { table: "ai_analysis", query: upsertQuery },
+      { table: "hd_tickets", query: selectQuery },
+      { table: "hd_tickets", query: updateQuery },
+      { table: "hd_ai_analysis", query: upsertQuery },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
     mocks.resolveCategoryId.mockResolvedValue("cat-new");
@@ -101,9 +101,9 @@ describe("prioritizeIncident", () => {
     };
     const updateQuery = createQuery({ data: null, error: null });
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: ticketRow, error: null }) },
-      { table: "tickets", query: updateQuery },
-      { table: "ai_analysis", query: createQuery({ data: null, error: null }) },
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      { table: "hd_tickets", query: updateQuery },
+      { table: "hd_ai_analysis", query: createQuery({ data: null, error: null }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
     mocks.resolveCategoryId.mockResolvedValue("cat-old");
@@ -126,7 +126,7 @@ describe("prioritizeIncident", () => {
     const { prioritizeIncident } = await import("../src/tools/prioritize-incident.js");
 
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: null, error: { message: "not found" } }) },
+      { table: "hd_tickets", query: createQuery({ data: null, error: { message: "not found" } }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 

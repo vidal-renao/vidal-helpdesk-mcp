@@ -83,7 +83,7 @@ export async function buildSlaAuditReport(
   const [{ data: ticketRows, error: ticketsError }, { data: organization, error: organizationError }] =
     await Promise.all([
       domainSchema
-        .from("tickets")
+        .from("hd_tickets")
         .select("id, ticket_number, title, status, priority, sla_breached, sla_resolution_due, sla_first_response_due, created_by")
         .eq("organization_id", organizationId)
         .in("status", ACTIVE_STATUSES)
@@ -178,7 +178,7 @@ async function resolveCustomerInfo(
     const batch = uniqueIds.slice(offset, offset + 100);
     if (batch.length === 0) continue;
     const { data, error } = await domainSchema
-      .from("customers_info")
+      .from("hd_customers_info")
       .select("id, company_name")
       .in("id", batch)
       .returns<CustomerInfoRow[]>();

@@ -18,8 +18,8 @@ export async function suggestSolution(input: SuggestSolutionInput): Promise<stri
   const agentId = process.env.MCP_AGENT_ID!;
 
   let query = supabase
-    .from("tickets")
-    .select("*, ai_analysis(suggested_category,sentiment,smart_response)")
+    .from("hd_tickets")
+    .select("*, ai_analysis:hd_ai_analysis(suggested_category,sentiment,smart_response)")
     .eq("organization_id", organizationId);
 
   const isUUID = /^[0-9a-f-]{36}$/.test(input.ticket_ref);
@@ -53,14 +53,14 @@ export async function suggestSolution(input: SuggestSolutionInput): Promise<stri
     ].join("\n");
 
     const { data: comment } = await supabase
-      .from("ticket_comments")
+      .from("hd_ticket_comments")
       .insert({ ticket_id: ticket.id, author_id: agentId, content, is_internal: true, is_ai_generated: true })
       .select("id")
       .single();
     commentId = comment?.id ?? null;
 
     if (ticket.status === "open" && !solution.escalate) {
-      await supabase.from("tickets").update({ status: "in_progress" }).eq("id", ticket.id);
+      await supabase.from("hd_tickets").update({ status: "in_progress" }).eq("id", ticket.id);
     }
   }
 

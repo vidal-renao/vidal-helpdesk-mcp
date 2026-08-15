@@ -13,8 +13,8 @@ export async function getTicketStatus(input: GetTicketStatusInput): Promise<stri
   const organizationId = process.env.MCP_ORGANIZATION_ID!;
 
   let query = supabase
-    .from("tickets")
-    .select(`*, categories(id,name,slug,color), ai_analysis(suggested_priority,confidence_score,summary,sentiment,smart_response,reasoning,contains_pii_detected,estimated_resolution_hours,model_used,processing_time_ms)`)
+    .from("hd_tickets")
+    .select(`*, categories(id,name,slug,color), ai_analysis:hd_ai_analysis(suggested_priority,confidence_score,summary,sentiment,smart_response,reasoning,contains_pii_detected,estimated_resolution_hours,model_used,processing_time_ms)`)
     .eq("organization_id", organizationId);
 
   const isUUID = /^[0-9a-f-]{36}$/.test(input.ticket_ref);
