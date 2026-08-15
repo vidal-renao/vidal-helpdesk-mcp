@@ -32,8 +32,8 @@ export async function listTickets(input: ListTicketsInput): Promise<string> {
   const organizationId = process.env.MCP_ORGANIZATION_ID!;
 
   let query = supabase
-    .from("tickets")
-    .select(`id,ticket_number,title,status,priority,source,detected_language,sla_breached,contains_pii,created_at,categories(name),ai_analysis(sentiment,confidence_score,summary)`)
+    .from("hd_tickets")
+    .select(`id,ticket_number,title,status,priority,source,detected_language,sla_breached,contains_pii,created_at,categories(name),ai_analysis:hd_ai_analysis(sentiment,confidence_score,summary)`)
     .eq("organization_id", organizationId)
     .order("created_at", { ascending: false })
     .limit(input.limit);

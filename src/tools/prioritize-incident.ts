@@ -14,7 +14,7 @@ export async function prioritizeIncident(input: PrioritizeIncidentInput): Promis
   const supabase = getSupabaseClient();
   const organizationId = process.env.MCP_ORGANIZATION_ID!;
 
-  let query = supabase.from("tickets").select("*").eq("organization_id", organizationId);
+  let query = supabase.from("hd_tickets").select("*").eq("organization_id", organizationId);
   const isUUID = /^[0-9a-f-]{36}$/.test(input.ticket_ref);
   if (isUUID) {
     query = query.eq("id", input.ticket_ref);
@@ -36,7 +36,7 @@ export async function prioritizeIncident(input: PrioritizeIncidentInput): Promis
   const categoryId = await resolveCategoryId(supabase, organizationId, triage.suggested_category);
   const applyPriority = triage.confidence_score >= 60;
 
-  await supabase.from("tickets").update({
+  await supabase.from("hd_tickets").update({
     priority: applyPriority ? triage.suggested_priority : ticket.priority,
     category_id: categoryId ?? ticket.category_id,
     detected_language: triage.detected_language,
@@ -44,7 +44,7 @@ export async function prioritizeIncident(input: PrioritizeIncidentInput): Promis
     tags: triage.keywords.slice(0, 5),
   }).eq("id", ticket.id);
 
-  await supabase.from("ai_analysis").upsert({
+  await supabase.from("hd_ai_analysis").upsert({
     ticket_id: ticket.id,
     suggested_category: triage.suggested_category,
     suggested_priority: triage.suggested_priority,

@@ -51,7 +51,7 @@ describe("getTicketStatus", () => {
         processing_time_ms: 400,
       },
     };
-    const from = createFromQueue([{ table: "tickets", query: createQuery({ data: ticketRow, error: null }) }]);
+    const from = createFromQueue([{ table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) }]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
     const result = await getTicketStatus({ ticket_ref: "TK-1001" });
@@ -86,7 +86,7 @@ describe("getTicketStatus", () => {
       ai_analysis: null,
     };
     const query = createQuery({ data: ticketRow, error: null });
-    const from = createFromQueue([{ table: "tickets", query }]);
+    const from = createFromQueue([{ table: "hd_tickets", query }]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
     const result = await getTicketStatus({ ticket_ref: uuid });
@@ -101,7 +101,7 @@ describe("getTicketStatus", () => {
     const { getTicketStatus } = await import("../src/tools/get-ticket-status.js");
 
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: null, error: { message: "no rows" } }) },
+      { table: "hd_tickets", query: createQuery({ data: null, error: { message: "no rows" } }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 

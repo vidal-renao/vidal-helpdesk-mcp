@@ -25,7 +25,7 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
   const applyAIPriority = triage.confidence_score >= 60;
 
   const { data: ticket, error } = await supabase
-    .from("tickets")
+    .from("hd_tickets")
     .insert({
       organization_id: organizationId,
       created_by: agentId,
@@ -45,7 +45,7 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
 
   if (error || !ticket) throw new Error(`Failed to create ticket: ${error?.message}`);
 
-  await supabase.from("ai_analysis").insert({
+  await supabase.from("hd_ai_analysis").insert({
     ticket_id: ticket.id,
     suggested_category: triage.suggested_category,
     suggested_priority: triage.suggested_priority,

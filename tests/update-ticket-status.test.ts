@@ -28,9 +28,9 @@ describe("updateTicketStatus", () => {
     const updateQuery = createQuery({ data: null, error: null });
     const commentQuery = createQuery({ data: { id: "comment-1" }, error: null });
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: ticketRow, error: null }) },
-      { table: "tickets", query: updateQuery },
-      { table: "ticket_comments", query: commentQuery },
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      { table: "hd_tickets", query: updateQuery },
+      { table: "hd_ticket_comments", query: commentQuery },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
@@ -53,8 +53,8 @@ describe("updateTicketStatus", () => {
     const ticketRow = { id: "ticket-2", ticket_number: 13, status: "resolved", priority: "low", title: "Printer jam" };
     const updateQuery = createQuery({ data: null, error: null });
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: ticketRow, error: null }) },
-      { table: "tickets", query: updateQuery },
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      { table: "hd_tickets", query: updateQuery },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
@@ -70,7 +70,7 @@ describe("updateTicketStatus", () => {
     const { updateTicketStatus } = await import("../src/tools/update-ticket-status.js");
 
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: null, error: { message: "not found" } }) },
+      { table: "hd_tickets", query: createQuery({ data: null, error: { message: "not found" } }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
@@ -85,8 +85,8 @@ describe("updateTicketStatus", () => {
 
     const ticketRow = { id: "ticket-3", ticket_number: 14, status: "open", priority: "low", title: "Test" };
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: ticketRow, error: null }) },
-      { table: "tickets", query: createQuery({ data: null, error: { message: "db unavailable" } }) },
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      { table: "hd_tickets", query: createQuery({ data: null, error: { message: "db unavailable" } }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 

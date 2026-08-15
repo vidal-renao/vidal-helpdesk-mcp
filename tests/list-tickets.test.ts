@@ -39,7 +39,7 @@ describe("listTickets", () => {
       },
     ];
     const query = createQuery({ data: rows, error: null });
-    const from = createFromQueue([{ table: "tickets", query }]);
+    const from = createFromQueue([{ table: "hd_tickets", query }]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
     const result = await listTickets({ limit: 10, status: "open", priority: "high" });
@@ -72,7 +72,7 @@ describe("listTickets", () => {
         ai_analysis: [{ sentiment: "calm", confidence_score: 70, summary: "Toner replacement" }],
       },
     ];
-    const from = createFromQueue([{ table: "tickets", query: createQuery({ data: rows, error: null }) }]);
+    const from = createFromQueue([{ table: "hd_tickets", query: createQuery({ data: rows, error: null }) }]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
     const result = await listTickets({ limit: 10 });
@@ -85,7 +85,7 @@ describe("listTickets", () => {
     const { listTickets } = await import("../src/tools/list-tickets.js");
 
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: null, error: { message: "connection reset" } }) },
+      { table: "hd_tickets", query: createQuery({ data: null, error: { message: "connection reset" } }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 

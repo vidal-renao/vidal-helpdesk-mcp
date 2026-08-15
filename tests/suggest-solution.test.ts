@@ -42,9 +42,9 @@ describe("suggestSolution", () => {
     const commentQuery = createQuery({ data: { id: "comment-1" }, error: null });
     const statusUpdateQuery = createQuery({ data: null, error: null });
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: ticketRow, error: null }) },
-      { table: "ticket_comments", query: commentQuery },
-      { table: "tickets", query: statusUpdateQuery },
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      { table: "hd_ticket_comments", query: commentQuery },
+      { table: "hd_tickets", query: statusUpdateQuery },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
     mocks.generateSolution.mockResolvedValue({
@@ -80,8 +80,8 @@ describe("suggestSolution", () => {
       ai_analysis: { suggested_category: "Security", sentiment: "urgent", smart_response: "..." },
     };
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: ticketRow, error: null }) },
-      { table: "ticket_comments", query: createQuery({ data: { id: "comment-2" }, error: null }) },
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      { table: "hd_ticket_comments", query: createQuery({ data: { id: "comment-2" }, error: null }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
     mocks.generateSolution.mockResolvedValue({
@@ -112,7 +112,7 @@ describe("suggestSolution", () => {
       detected_language: "en",
       ai_analysis: null,
     };
-    const from = createFromQueue([{ table: "tickets", query: createQuery({ data: ticketRow, error: null }) }]);
+    const from = createFromQueue([{ table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) }]);
     mocks.getSupabaseClient.mockReturnValue({ from });
     mocks.generateSolution.mockResolvedValue({
       solution: "Run disk cleanup.",

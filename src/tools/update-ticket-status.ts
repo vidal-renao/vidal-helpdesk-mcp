@@ -16,7 +16,7 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput): Promis
   const agentId = process.env.MCP_AGENT_ID!;
 
   let query = supabase
-    .from("tickets")
+    .from("hd_tickets")
     .select("id,ticket_number,status,priority,title")
     .eq("organization_id", organizationId);
 
@@ -39,13 +39,13 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput): Promis
   if (input.status === "resolved") updatePayload.resolved_at = new Date().toISOString();
   if (input.status === "closed") updatePayload.closed_at = new Date().toISOString();
 
-  const { error: updateError } = await supabase.from("tickets").update(updatePayload).eq("id", ticket.id);
+  const { error: updateError } = await supabase.from("hd_tickets").update(updatePayload).eq("id", ticket.id);
   if (updateError) throw new Error(`Failed to update: ${updateError.message}`);
 
   let commentId: string | null = null;
   if (input.comment && agentId) {
     const { data: comment } = await supabase
-      .from("ticket_comments")
+      .from("hd_ticket_comments")
       .insert({
         ticket_id: ticket.id,
         author_id: agentId,

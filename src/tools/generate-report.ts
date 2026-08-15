@@ -21,7 +21,7 @@ export async function generateReport(input: GenerateReportInput): Promise<string
   else from.setMonth(now.getMonth() - 1);
 
   const { data: tickets, error } = await supabase
-    .from("tickets")
+    .from("hd_tickets")
     .select("*, categories(name)")
     .eq("organization_id", organizationId)
     .gte("created_at", from.toISOString())

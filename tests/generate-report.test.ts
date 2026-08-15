@@ -43,7 +43,7 @@ describe("generateReport", () => {
       ticket({ priority: "medium", status: "in_progress", sla_breached: false, categories: { name: "Hardware" } }),
       ticket({ priority: "low", status: "resolved", sla_breached: false, resolved_at: "2026-07-15T05:00:00.000Z", categories: { name: "Software" } }),
     ];
-    const from = createFromQueue([{ table: "tickets", query: createQuery({ data: tickets, error: null }) }]);
+    const from = createFromQueue([{ table: "hd_tickets", query: createQuery({ data: tickets, error: null }) }]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
     const result = await generateReport({ period: "week", format: "json" });
@@ -64,7 +64,7 @@ describe("generateReport", () => {
     const { generateReport } = await import("../src/tools/generate-report.js");
 
     const tickets = [ticket({ priority: "low", status: "resolved", resolved_at: "2026-07-15T01:00:00.000Z" })];
-    const from = createFromQueue([{ table: "tickets", query: createQuery({ data: tickets, error: null }) }]);
+    const from = createFromQueue([{ table: "hd_tickets", query: createQuery({ data: tickets, error: null }) }]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
     const result = await generateReport({ period: "today", format: "text" });
@@ -79,7 +79,7 @@ describe("generateReport", () => {
     const { generateReport } = await import("../src/tools/generate-report.js");
 
     const from = createFromQueue([
-      { table: "tickets", query: createQuery({ data: null, error: { message: "timeout" } }) },
+      { table: "hd_tickets", query: createQuery({ data: null, error: { message: "timeout" } }) },
     ]);
     mocks.getSupabaseClient.mockReturnValue({ from });
 
