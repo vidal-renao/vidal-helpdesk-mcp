@@ -92,6 +92,7 @@ AUDIT_EMAIL_ENABLED=true
 RESEND_API_KEY=re_your_key
 RESEND_FROM_EMAIL=helpdesk@example.com
 AUDIT_RECIPIENT_EMAIL=ops@example.com
+AUDIT_DASHBOARD_URL=https://your-helpdesk-domain.example/dashboard
 
 ALLOWED_ORIGINS=https://your-helpdesk-domain.example,https://your-mcp-domain.example
 ```

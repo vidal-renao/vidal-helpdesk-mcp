@@ -2,11 +2,21 @@ import { getDomainSchema, getPublicSchema } from "./supabase.js";
 
 export type SlaStatus = "compliant" | "at_risk" | "breached";
 
+/**
+ * One-word verdict for the whole report, used for the email subject and
+ * status banner. `action_required` = something has breached or a high/critical
+ * ticket is at risk; `attention` = nothing breached, but tickets are at risk,
+ * have no owner, or cannot be measured against an SLA at all; `healthy`
+ * otherwise (including an empty backlog).
+ */
+export type AuditHealth = "action_required" | "attention" | "healthy";
+
 export type SlaAuditTicket = {
   ticket_id: string;
   ticket_reference: string | null;
   ticket_title: string;
   ticket_status: string;
+  priority: string;
   customer_profile_id: string | null;
   /** @deprecated Use customer_profile_id. This is not a companies-table id. */
   company_id: string | null;
@@ -15,6 +25,10 @@ export type SlaAuditTicket = {
   project_id: null;
   project_name: null;
   sla_status: SlaStatus;
+  /** False when the ticket has neither an SLA deadline nor a breach flag. */
+  sla_measured: boolean;
+  has_owner: boolean;
+  age_days: number | null;
   vip_risk: boolean;
   risk_reason: string | null;
   required_action: string | null;
@@ -32,8 +46,21 @@ export type SlaAuditReport = {
   organization_id: string;
   organization_name: string | null;
   reporting_period: { start: string; end: string };
-  compliance_percentage: number;
+  /**
+   * Compliant share of the tickets that can actually be measured against an
+   * SLA. `null` when no active ticket has an SLA deadline or breach flag --
+   * reporting 100% in that case would claim compliance nobody measured.
+   */
+  compliance_percentage: number | null;
+  health: AuditHealth;
   active_ticket_count: number;
+  sla_measured_ticket_count: number;
+  sla_unmeasured_ticket_count: number;
+  breached_ticket_count: number;
+  at_risk_ticket_count: number;
+  unowned_ticket_count: number;
+  waiting_ticket_count: number;
+  oldest_active_age_days: number | null;
   company_count: number;
   unassigned_ticket_count: number;
   vip_risk_count: number;
@@ -44,7 +71,9 @@ export type SlaAuditReport = {
 };
 
 const ACTIVE_STATUSES = ["open", "in_progress", "pending_customer", "pending_third_party"];
+const WAITING_STATUSES = new Set(["pending_customer", "pending_third_party"]);
 const VIP_PRIORITIES = new Set(["high", "critical"]);
+const DAY_MS = 86_400_000;
 
 /**
  * A ticket is "at_risk" once its resolution SLA is due within this window and
@@ -62,9 +91,15 @@ type TicketRow = {
   status: string;
   priority: string;
   sla_breached: boolean | null;
+  sla_response_breached: boolean | null;
+  sla_resolution_breached: boolean | null;
+  resolution_due_at: string | null;
+  response_due_at: string | null;
   sla_resolution_due: string | null;
   sla_first_response_due: string | null;
   created_by: string | null;
+  assigned_to: string | null;
+  created_at: string | null;
 };
 
 type CustomerInfoRow = {
@@ -84,8 +119,11 @@ export async function buildSlaAuditReport(
     await Promise.all([
       domainSchema
         .from("hd_tickets")
-        .select("id, ticket_number, title, status, priority, sla_breached, sla_resolution_due, sla_first_response_due, created_by")
+        .select(
+          "id, ticket_number, title, status, priority, sla_breached, sla_response_breached, sla_resolution_breached, resolution_due_at, response_due_at, sla_resolution_due, sla_first_response_due, created_by, assigned_to, created_at"
+        )
         .eq("organization_id", organizationId)
+        .is("deleted_at", null)
         .in("status", ACTIVE_STATUSES)
         .returns<TicketRow[]>(),
       publicSchema.from("organizations").select("name").eq("id", organizationId).maybeSingle<{ name: string | null }>(),
@@ -110,9 +148,18 @@ export async function buildSlaAuditReport(
 
   const normalized = tickets.map((ticket) => normalizeTicket(ticket, companyByProfileId, now));
 
-  const compliantCount = normalized.filter((t) => t.sla_status === "compliant").length;
+  const measured = normalized.filter((t) => t.sla_measured);
+  const compliantCount = measured.filter((t) => t.sla_status === "compliant").length;
   const compliancePercentage =
-    normalized.length > 0 ? Number(((compliantCount / normalized.length) * 100).toFixed(2)) : 100;
+    measured.length > 0
+      ? Number(((compliantCount / measured.length) * 100).toFixed(2))
+      : normalized.length > 0
+        ? null
+        : 100;
+  const breachedCount = normalized.filter((t) => t.sla_status === "breached").length;
+  const atRiskCount = normalized.filter((t) => t.sla_status === "at_risk").length;
+  const unownedCount = normalized.filter((t) => !t.has_owner).length;
+  const ages = normalized.map((t) => t.age_days).filter((age): age is number => age != null);
 
   const companies = buildCompanySummaries(normalized);
   const unassignedTicketCount = companies.find((c) => c.company_id === null)?.active_ticket_count ?? 0;
@@ -123,6 +170,13 @@ export async function buildSlaAuditReport(
     .sort(compareVipUrgency);
 
   const sortedTickets = [...normalized].sort(compareTickets);
+  const unmeasuredCount = normalized.length - measured.length;
+  const health: AuditHealth =
+    breachedCount > 0 || vipRisks.length > 0
+      ? "action_required"
+      : atRiskCount > 0 || unownedCount > 0 || unmeasuredCount > 0
+        ? "attention"
+        : "healthy";
 
   return {
     generated_at: now.toISOString(),
@@ -130,7 +184,15 @@ export async function buildSlaAuditReport(
     organization_name: organization?.name ?? null,
     reporting_period: { start: period.start.toISOString(), end: period.end.toISOString() },
     compliance_percentage: compliancePercentage,
+    health,
     active_ticket_count: normalized.length,
+    sla_measured_ticket_count: measured.length,
+    sla_unmeasured_ticket_count: unmeasuredCount,
+    breached_ticket_count: breachedCount,
+    at_risk_ticket_count: atRiskCount,
+    unowned_ticket_count: unownedCount,
+    waiting_ticket_count: normalized.filter((t) => WAITING_STATUSES.has(t.ticket_status)).length,
+    oldest_active_age_days: ages.length > 0 ? Math.max(...ages) : null,
     company_count: realCompanyCount,
     unassigned_ticket_count: unassignedTicketCount,
     vip_risk_count: vipRisks.length,
@@ -143,8 +205,16 @@ export async function buildSlaAuditReport(
 
 function normalizeTicket(ticket: TicketRow, companyByProfileId: Map<string, string>, now: Date): SlaAuditTicket {
   const companyName = ticket.created_by ? companyByProfileId.get(ticket.created_by) ?? null : null;
-  const dueAt = ticket.sla_resolution_due ?? ticket.sla_first_response_due ?? null;
+  // resolution_due_at/response_due_at are the canonical columns ticket-system
+  // writes today (lib/sla.ts); the sla_* pair is the legacy mirror.
+  const dueAt =
+    ticket.resolution_due_at ??
+    ticket.sla_resolution_due ??
+    ticket.response_due_at ??
+    ticket.sla_first_response_due ??
+    null;
   const slaStatus = resolveSlaStatus(ticket, dueAt, now);
+  const createdMs = ticket.created_at ? new Date(ticket.created_at).getTime() : Number.NaN;
   const isVipPriority = VIP_PRIORITIES.has(ticket.priority);
   const vipRisk = isVipPriority && slaStatus !== "compliant";
 
@@ -153,6 +223,7 @@ function normalizeTicket(ticket: TicketRow, companyByProfileId: Map<string, stri
     ticket_reference: ticket.ticket_number != null ? `TK-${String(ticket.ticket_number).padStart(4, "0")}` : null,
     ticket_title: ticket.title,
     ticket_status: ticket.status,
+    priority: ticket.priority,
     customer_profile_id: ticket.created_by,
     company_id: ticket.created_by && companyName ? ticket.created_by : null,
     company_name: companyName,
@@ -160,6 +231,9 @@ function normalizeTicket(ticket: TicketRow, companyByProfileId: Map<string, stri
     project_id: null,
     project_name: null,
     sla_status: slaStatus,
+    sla_measured: dueAt != null || isBreachFlagged(ticket),
+    has_owner: Boolean(ticket.assigned_to),
+    age_days: Number.isFinite(createdMs) ? Math.max(0, Math.floor((now.getTime() - createdMs) / DAY_MS)) : null,
     vip_risk: vipRisk,
     risk_reason: slaStatus === "compliant" ? null : buildRiskReason(slaStatus, dueAt, now),
     required_action: slaStatus === "compliant" ? null : buildRequiredAction(slaStatus),
@@ -190,8 +264,12 @@ async function resolveCustomerInfo(
   return result;
 }
 
+function isBreachFlagged(ticket: TicketRow): boolean {
+  return Boolean(ticket.sla_breached || ticket.sla_response_breached || ticket.sla_resolution_breached);
+}
+
 function resolveSlaStatus(ticket: TicketRow, dueAt: string | null, now: Date): SlaStatus {
-  if (ticket.sla_breached) {
+  if (isBreachFlagged(ticket)) {
     return "breached";
   }
 
