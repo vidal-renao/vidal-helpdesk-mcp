@@ -2,6 +2,27 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## 2026-09-28 — Daily SLA email redesign; stop reporting unmeasured tickets as compliant
+
+**Changed**
+
+- **New daily email layout** (`src/lib/audit-template.ts`). Table-based and inline-styled so it renders the same in Gmail, Outlook and Apple Mail (the previous flexbox KPI row collapsed in Outlook). It opens with a status banner and a one-sentence verdict, mirrored in a hidden inbox preheader; shows SLA compliance, active, unowned and oldest-open KPIs; a numbered "Today" action list; an active-ticket table (reference, company, status, priority, SLA, owner, age — no ticket titles); company bars; and an optional dashboard button.
+- **Subject leads with the verdict**, e.g. `[Needs attention] 5 active tickets · SLA not measured · 3 unowned — Vidal Real Estate · 28 Sept`, instead of the same `100% compliance` line every day.
+- Removed the footer claim "Swiss DSG Compliant": it asserted a legal certification this repository does not hold.
+- `SlaAuditReport` (also returned by the `get_sla_audit_report` MCP tool) gains `health`, `sla_measured_ticket_count`, `sla_unmeasured_ticket_count`, `breached_ticket_count`, `at_risk_ticket_count`, `unowned_ticket_count`, `waiting_ticket_count`, `oldest_active_age_days`, and per-ticket `priority`, `sla_measured`, `has_owner`, `age_days`. **`compliance_percentage` is now `number | null`.**
+
+**Fixed**
+
+- **The report said "100% compliance · No priority follow-ups required" every day since 2026-09-08 while no ticket had an SLA deadline.** `sla_policies` is empty, so all 5 active tickets had no due date, and a ticket without a due date was classified as compliant. Among them was a critical-priority ticket that had been open 38 days, and 3 tickets had no assigned agent. Compliance is now computed over measurable tickets only and is `null` when none are; unowned and high-priority unmeasured tickets are listed as actions.
+- Soft-deleted tickets (`deleted_at` set) were included in the audit; they are now excluded, matching ticket-system.
+- The audit read only the legacy `sla_resolution_due`/`sla_first_response_due` columns and only `sla_breached`. It now prefers the canonical `resolution_due_at`/`response_due_at` that ticket-system writes, and honours `sla_response_breached`/`sla_resolution_breached`.
+
+**Added**
+
+- Optional `AUDIT_DASHBOARD_URL` (https only) for the email's dashboard button; the button is omitted when unset.
+
+**Rollback**: revert this commit. No migration or schema change is involved; the new selected columns already exist on `hd_tickets`.
+
 ## 2026-08-01 — Dead-man's switch: the absence of a run is now an alert
 
 **Added**

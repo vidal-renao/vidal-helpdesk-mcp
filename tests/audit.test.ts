@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   markDeliveryUnknown: vi.fn(),
   buildSlaAuditReport: vi.fn(),
   auditTemplate: vi.fn(),
+  getAuditEmailSubject: vi.fn(),
   resendSend: vi.fn(),
 }));
 
@@ -32,6 +33,7 @@ vi.mock("../src/lib/sla-audit.js", () => ({
 
 vi.mock("../src/lib/audit-template.js", () => ({
   auditTemplate: mocks.auditTemplate,
+  getAuditEmailSubject: mocks.getAuditEmailSubject,
 }));
 
 vi.mock("resend", () => ({
@@ -110,6 +112,14 @@ function fakeReport(overrides: Partial<SlaAuditReport> = {}): SlaAuditReport {
     organization_name: "Vidal Lab",
     reporting_period: { start: "2026-07-21T00:00:00.000Z", end: "2026-07-22T00:00:00.000Z" },
     compliance_percentage: 75,
+    health: "healthy",
+    sla_measured_ticket_count: 0,
+    sla_unmeasured_ticket_count: 0,
+    breached_ticket_count: 0,
+    at_risk_ticket_count: 0,
+    unowned_ticket_count: 0,
+    waiting_ticket_count: 0,
+    oldest_active_age_days: null,
     active_ticket_count: 8,
     company_count: 2,
     unassigned_ticket_count: 6,
@@ -140,6 +150,7 @@ describe("api/cron/audit", () => {
 
     mocks.buildSlaAuditReport.mockResolvedValue(fakeReport());
     mocks.auditTemplate.mockReturnValue("<html></html>");
+    mocks.getAuditEmailSubject.mockReturnValue("[All clear] subject");
     mocks.claimAuditRunSlot.mockResolvedValue({
       claimed: true, id: "run-1", retry: false, payloadHash: null, payloadSnapshot: null, idempotencyKey: null,
     });

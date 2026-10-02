@@ -11,7 +11,7 @@ import {
   type AuditRunStatus,
   type DeliveryPayload,
 } from "./audit-runs.js";
-import { auditTemplate } from "./audit-template.js";
+import { auditTemplate, getAuditEmailSubject } from "./audit-template.js";
 import { getRuntimeEnv } from "./env.js";
 import { logError, logInfo } from "./logger.js";
 import { classifyResendException, classifyResendResponse } from "./resend-outcome.js";
@@ -76,8 +76,8 @@ export class AuditService {
         payload = {
           from: env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev",
           to: recipient,
-          subject: `VIDAL Daily SLA Report: ${report.compliance_percentage}% compliance - ${period.start.toISOString().slice(0, 10)}`,
-          html: auditTemplate(report),
+          subject: getAuditEmailSubject(report),
+          html: auditTemplate(report, { dashboardUrl: env.AUDIT_DASHBOARD_URL ?? null }),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Audit report generation failed";

@@ -25,6 +25,7 @@ const envSchema = z.object({
   MCP_ORGANIZATION_ID: z.string().min(1).optional(),
   RESEND_FROM_EMAIL: z.string().email().optional(),
   AUDIT_RECIPIENT_EMAIL: z.string().email().optional(),
+  AUDIT_DASHBOARD_URL: z.string().url().startsWith("https://").optional(),
   SUPABASE_SCHEMA: z.string().default("public"),
 });
 

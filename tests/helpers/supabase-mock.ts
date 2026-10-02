@@ -10,6 +10,7 @@ const CHAIN_METHODS = [
   "limit",
   "gte",
   "returns",
+  "is",
   "insert",
   "update",
   "upsert",

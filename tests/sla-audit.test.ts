@@ -23,9 +23,15 @@ function ticket(overrides: Record<string, unknown>) {
     status: "open",
     priority: "medium",
     sla_breached: false,
+    sla_response_breached: false,
+    sla_resolution_breached: false,
+    resolution_due_at: null,
+    response_due_at: null,
     sla_resolution_due: null,
     sla_first_response_due: null,
     created_by: null,
+    assigned_to: "agent-1",
+    created_at: "2026-07-20T12:00:00.000Z",
     ...overrides,
   };
 }
@@ -61,6 +67,15 @@ describe("buildSlaAuditReport", () => {
 
     const ticketsQuery = domainFrom.mock.results[0].value;
     expect(ticketsQuery.eq).toHaveBeenCalledWith("organization_id", "org-123");
+  });
+
+  it("excludes soft-deleted tickets from the report", async () => {
+    const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
+    const { domainFrom } = setupSchemas([]);
+
+    await buildSlaAuditReport("org-123", now, period);
+
+    expect(domainFrom.mock.results[0].value.is).toHaveBeenCalledWith("deleted_at", null);
   });
 
   it("groups multiple tickets from the same company under one entry without double-counting", async () => {
@@ -176,19 +191,77 @@ describe("buildSlaAuditReport", () => {
     expect(report.action_items[0]).toContain("TK-0002");
   });
 
-  it("computes compliance_percentage from the returned, correctly scoped ticket set", async () => {
+  it("computes compliance_percentage over measurable tickets only", async () => {
     const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
     setupSchemas([
-      ticket({ ticket_number: 1, sla_breached: false, sla_resolution_due: null }),
-      ticket({ ticket_number: 2, sla_breached: false, sla_resolution_due: null }),
+      ticket({ ticket_number: 1, resolution_due_at: "2026-07-25T00:00:00.000Z" }),
+      ticket({ ticket_number: 2, sla_resolution_due: "2026-07-25T00:00:00.000Z" }),
       ticket({ ticket_number: 3, sla_breached: true }),
-      ticket({ ticket_number: 4, sla_breached: true }),
+      ticket({ ticket_number: 4, sla_resolution_breached: true }),
+      ticket({ ticket_number: 5 }), // no deadline and no breach flag: not measurable
     ]);
 
     const report = await buildSlaAuditReport("org-123", now, period);
 
-    expect(report.active_ticket_count).toBe(4);
+    expect(report.active_ticket_count).toBe(5);
+    expect(report.sla_measured_ticket_count).toBe(4);
+    expect(report.sla_unmeasured_ticket_count).toBe(1);
+    expect(report.breached_ticket_count).toBe(2);
     expect(report.compliance_percentage).toBe(50);
+    expect(report.health).toBe("action_required");
+  });
+
+  it("reports compliance as null, not 100%, when no active ticket has an SLA deadline", async () => {
+    const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
+    setupSchemas([ticket({ ticket_number: 1, assigned_to: null }), ticket({ ticket_number: 2 })]);
+
+    const report = await buildSlaAuditReport("org-123", now, period);
+
+    expect(report.compliance_percentage).toBeNull();
+    expect(report.sla_unmeasured_ticket_count).toBe(2);
+    expect(report.unowned_ticket_count).toBe(1);
+    expect(report.health).toBe("attention");
+  });
+
+  it("keeps an empty backlog at 100% and healthy", async () => {
+    const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
+    setupSchemas([]);
+
+    const report = await buildSlaAuditReport("org-123", now, period);
+
+    expect(report.compliance_percentage).toBe(100);
+    expect(report.health).toBe("healthy");
+    expect(report.oldest_active_age_days).toBeNull();
+  });
+
+  it("prefers the canonical resolution_due_at over the legacy column", async () => {
+    const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
+    setupSchemas([
+      ticket({
+        ticket_number: 1,
+        resolution_due_at: "2026-07-21T13:00:00.000Z",
+        sla_resolution_due: "2026-07-30T00:00:00.000Z",
+      }),
+    ]);
+
+    const report = await buildSlaAuditReport("org-123", now, period);
+
+    expect(report.tickets[0].sla_status).toBe("at_risk");
+    expect(report.tickets[0].due_at).toBe("2026-07-21T13:00:00.000Z");
+  });
+
+  it("counts waiting states separately and derives ticket age in whole days", async () => {
+    const { buildSlaAuditReport } = await import("../src/lib/sla-audit.js");
+    setupSchemas([
+      ticket({ ticket_number: 1, status: "pending_customer", created_at: "2026-07-01T12:00:00.000Z" }),
+      ticket({ ticket_number: 2, status: "pending_third_party" }),
+      ticket({ ticket_number: 3, status: "open" }),
+    ]);
+
+    const report = await buildSlaAuditReport("org-123", now, period);
+
+    expect(report.waiting_ticket_count).toBe(2);
+    expect(report.oldest_active_age_days).toBe(20);
   });
 
   it("returns tickets sorted by ticket number for stable output", async () => {
