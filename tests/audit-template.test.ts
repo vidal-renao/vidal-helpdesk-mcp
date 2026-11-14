@@ -452,7 +452,7 @@ describe("getAuditEmailText", () => {
     expect(text.startsWith("VIDAL ECOSYSTEM\nHelpDesk AI · Daily SLA brief\nVidal Lab · Saturday 14 November 2026 · 06:17 CET")).toBe(
       true
     );
-    expect(text).toContain("ACTION REQUIRED\n1 ticket in the queue has breached SLA and need escalation today.");
+    expect(text).toContain("ACTION REQUIRED\n1 ticket in the queue has breached SLA and needs escalation today.");
     expect(text).toMatch(/SLA compliance 7d\s+—\s+No resolved tickets in the last 7 days/);
     expect(text).toContain("TODAY'S ACTIONS (1 action)");
     expect(text).toContain("  1. TK-0123 (Acme Corp) — Escalate immediately and notify the account owner.");

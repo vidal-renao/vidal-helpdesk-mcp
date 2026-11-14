@@ -105,7 +105,7 @@ function zurichYear(iso: string): string {
 export function describeVerdict(report: SlaAuditReport): string {
   if (report.active_ticket_count === 0) return "No active tickets. Nothing is waiting on the team.";
   if (report.breached_ticket_count > 0) {
-    return `${plural(report.breached_ticket_count, "ticket in the queue has", "tickets in the queue have")} breached SLA and need escalation today.`;
+    return `${plural(report.breached_ticket_count, "ticket in the queue has breached SLA and needs", "tickets in the queue have breached SLA and need")} escalation today.`;
   }
   if (report.vip_risk_count > 0) {
     return `${plural(report.vip_risk_count, "high-priority ticket is", "high-priority tickets are")} close to breaching SLA.`;
