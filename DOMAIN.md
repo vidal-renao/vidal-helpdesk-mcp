@@ -58,8 +58,11 @@ There is no ticket-to-project relationship in this schema. A `projects` table ex
 
 `helpdesk.audit_runs` supports `pending | sending | sent | failed |
 delivery_unknown`; only `failed` is automatically reclaimable. The immutable
-email is stored in `payload_snapshot` and provider evidence in
-`provider_message_id`.
+email (`from`, `to`, `subject`, `html` and, since the enterprise redesign, the
+plain-text alternative `text`) is stored in `payload_snapshot` and provider
+evidence in `provider_message_id`. `text` is optional and only enters
+`payload_hash` when present, so snapshots written before it existed still
+validate and retry with their original hash.
 
 `customer_profile_id` always represents `tickets.created_by`, even without a
 `customers_info` row. `company_id` is a deprecated compatibility alias and is

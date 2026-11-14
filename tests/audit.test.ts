@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   buildSlaAuditReport: vi.fn(),
   auditTemplate: vi.fn(),
   getAuditEmailSubject: vi.fn(),
+  getAuditEmailText: vi.fn(),
   resendSend: vi.fn(),
 }));
 
@@ -34,6 +35,7 @@ vi.mock("../src/lib/sla-audit.js", () => ({
 vi.mock("../src/lib/audit-template.js", () => ({
   auditTemplate: mocks.auditTemplate,
   getAuditEmailSubject: mocks.getAuditEmailSubject,
+  getAuditEmailText: mocks.getAuditEmailText,
 }));
 
 vi.mock("resend", () => ({
@@ -163,6 +165,7 @@ describe("api/cron/audit", () => {
 
     mocks.buildSlaAuditReport.mockResolvedValue(fakeReport());
     mocks.auditTemplate.mockReturnValue("<html></html>");
+    mocks.getAuditEmailText.mockReturnValue("plain text");
     mocks.getAuditEmailSubject.mockReturnValue("[All clear] subject");
     mocks.claimAuditRunSlot.mockResolvedValue({
       claimed: true, id: "run-1", retry: false, payloadHash: null, payloadSnapshot: null, idempotencyKey: null,
@@ -239,7 +242,7 @@ describe("api/cron/audit", () => {
       expect.objectContaining({ organizationId: "org-123", reportType: "sla_daily_audit", recipient: "ops@example.com" })
     );
     expect(mocks.resendSend).toHaveBeenCalledWith(
-      expect.objectContaining({ from: "audit@example.com", to: "ops@example.com" }),
+      expect.objectContaining({ from: "audit@example.com", to: "ops@example.com", html: "<html></html>", text: "plain text" }),
       { idempotencyKey: "sla-audit/run-1" }
     );
     expect(mocks.markAuditRunSent).toHaveBeenCalledWith("run-1", "email-123");

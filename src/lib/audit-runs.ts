@@ -3,7 +3,12 @@ import { getAuditRunsTable } from "./supabase.js";
 
 export type AuditRunStatus = "pending" | "sending" | "sent" | "failed" | "delivery_unknown";
 export type ReportingPeriod = { start: Date; end: Date };
-export type DeliveryPayload = { from: string; to: string; subject: string; html: string };
+/**
+ * `text` is the plain-text alternative. It is optional so snapshots persisted
+ * before it existed still validate, and it only enters the hash when present,
+ * so their stored payload_hash stays reproducible on retry.
+ */
+export type DeliveryPayload = { from: string; to: string; subject: string; html: string; text?: string };
 export type ClaimAuditRunInput = {
   organizationId: string;
   reportType: string;
@@ -47,6 +52,7 @@ export function stablePayloadHash(payload: DeliveryPayload): string {
     html: payload.html,
     subject: payload.subject,
     to: normalizeRecipient(payload.to),
+    ...(typeof payload.text === "string" ? { text: payload.text } : {}),
   });
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -142,7 +148,10 @@ export async function markAuditRunSending(
 function validSnapshot(value: unknown): value is DeliveryPayload {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
-  return ["from", "to", "subject", "html"].every((key) => typeof record[key] === "string");
+  return (
+    ["from", "to", "subject", "html"].every((key) => typeof record[key] === "string") &&
+    (record.text === undefined || typeof record.text === "string")
+  );
 }
 
 async function transition(

@@ -192,4 +192,17 @@ describe("getUtcDayPeriod", () => {
     expect(stablePayloadHash(payload)).toBe(stablePayloadHash({ ...payload }));
     expect(stablePayloadHash(payload)).not.toBe(stablePayloadHash({ ...payload, html: "<p>Changed</p>" }));
   });
+
+  it("keeps the hash of html-only snapshots stable and covers the plain-text part when present", async () => {
+    const { createHash } = await import("node:crypto");
+    const { stablePayloadHash } = await import("../src/lib/audit-runs.js");
+    const payload = { from: "audit@example.com", to: "ops@example.com", subject: "Daily", html: "<p>Stable</p>" };
+    const legacy = createHash("sha256")
+      .update(JSON.stringify({ from: payload.from, html: payload.html, subject: payload.subject, to: payload.to }))
+      .digest("hex");
+
+    expect(stablePayloadHash(payload)).toBe(legacy);
+    expect(stablePayloadHash({ ...payload, text: "Stable" })).not.toBe(legacy);
+    expect(stablePayloadHash({ ...payload, text: "Stable" })).not.toBe(stablePayloadHash({ ...payload, text: "Changed" }));
+  });
 });
