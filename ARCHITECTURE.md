@@ -98,7 +98,7 @@ There is no ticket-to-project relationship anywhere in this schema. A `projects`
 
 ## Idempotency design
 
-`helpdesk.audit_runs` carries a unique constraint on `(organization_id, report_type, reporting_period_start, recipient)`, where `reporting_period_start` is the UTC-midnight start of the calendar day (`getUtcDayPeriod()` in `src/lib/audit-runs.ts`). Every audit invocation for the same org/day/recipient collapses onto the same row.
+`helpdesk.audit_runs` carries a unique constraint on `(organization_id, report_type, reporting_period_start, recipient)`, where `reporting_period_start` is the UTC-midnight start of the calendar day (`getUtcDayPeriod()` in `src/lib/audit-runs.ts`). Every audit invocation for the same org/day/recipient collapses onto the same row. The period is only the dedupe key: SLA state is evaluated at the real invocation time (`AuditService.run` takes an injectable clock), and the email renders all times in Europe/Zurich (CET/CEST). The dedupe day deliberately stays UTC — switching it to a Zurich day would change `reporting_period_start` for existing rows and could let one calendar day claim two slots during the switch-over, for no reader-visible benefit (the scheduled run at 05:17 UTC is the same calendar day in both zones).
 
 Claiming a slot (`claimAuditRunSlot`):
 
@@ -122,7 +122,7 @@ Vercel routes (`vercel.json`) three separate functions from one repo:
 - `/api/health/audit` → `api/health/audit.ts`
 - everything else → `src/vercel-server.ts` (root, health, `/mcp`, and legacy 410 handling)
 
-GitHub Actions (`.github/workflows/audit.yml`) hits `/api/cron/audit` once daily at 06:00 UTC with a bearer secret; `.github/workflows/ci.yml` runs lint/test/build on every PR and push to `main`/`master`.
+GitHub Actions (`.github/workflows/audit.yml`) hits `/api/cron/audit` once daily at 05:17 UTC (off-peak minute) with a bearer secret; `.github/workflows/ci.yml` runs lint/test/build on every PR and push to `main`/`master`.
 
 ## Known limitations (by design or by gap — not yet fixed)
 

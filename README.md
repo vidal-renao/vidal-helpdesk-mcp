@@ -44,7 +44,7 @@ The system is designed for Swiss SME expectations around reliability, privacy, a
 | MCP stdio | `src/index.ts` | Local MCP entrypoint for desktop or agent clients |
 | MCP Streamable HTTP | `src/vercel-server.ts` | Stateless authenticated `POST /mcp` transport |
 | Business services | `src/lib/audit-service.ts` | Orchestrates the daily audit: claims an idempotency slot, builds the SLA report, sends the email, records the outcome |
-| SLA aggregation | `src/lib/sla-audit.ts` | Shared, read-only computation of compliance %, per-company ticket breakdown, and VIP risks — used by both the audit email and the `get_sla_audit_report` MCP tool |
+| SLA aggregation | `src/lib/sla-audit.ts` | Shared, read-only computation of resolved-window SLA compliance (last 7 days), breached-in-queue, per-company breakdown, high-priority SLA risks and the admin-approval queue — used by both the audit email and the `get_sla_audit_report` MCP tool |
 | Delivery idempotency | `src/lib/audit-runs.ts` | Atomic claim/sent/failed state machine against `helpdesk.audit_runs`, keyed on (organization, report type, UTC day, recipient) |
 | Runtime validation | `src/lib/env.ts` | Zod validation for environment variables |
 | Security boundary | `src/lib/cors.ts` | Dynamic allowlist CORS enforcement |
@@ -65,7 +65,7 @@ flowchart LR
   SVC --> CLAIM[claimAuditRunSlot — helpdesk.audit_runs]
   CLAIM -->|claimed| SLA[buildSlaAuditReport]
   CLAIM -->|already sent / in progress| SKIP[skip, no email]
-  SLA --> HD[(tickets + customers_info)]
+  SLA --> HD[(active + resolved-in-7d tickets, customers_info)]
   SLA --> PUB[(organizations)]
   SLA --> RESEND[Resend email]
   RESEND --> MARK[markAuditRunSent / markAuditRunFailed]
@@ -91,7 +91,7 @@ AUDIT_CRON_SECRET=your-audit-cron-secret
 AUDIT_EMAIL_ENABLED=true
 RESEND_API_KEY=re_your_key
 RESEND_FROM_EMAIL=helpdesk@example.com
-AUDIT_RECIPIENT_EMAIL=ops@example.com
+AUDIT_RECIPIENT_EMAIL=ops@example.com   # required; no fallback — the audit returns 500 "AUDIT_RECIPIENT_EMAIL not configured" without it
 AUDIT_DASHBOARD_URL=https://your-helpdesk-domain.example/dashboard
 
 ALLOWED_ORIGINS=https://your-helpdesk-domain.example,https://your-mcp-domain.example
@@ -172,14 +172,19 @@ Runtime responsibilities:
 - Validate runtime environment variables.
 - If `AUDIT_EMAIL_ENABLED=false`, skip entirely — no claim, no query, no email.
 - Atomically claim the delivery slot for `(organization, "sla_daily_audit", current UTC day, recipient)` in `helpdesk.audit_runs`. If a report for this slot was already sent, or another invocation is currently mid-flight, skip without querying ticket data — this is what makes repeated invocations (a stuck-frequent cron, a manual retry, an overlapping serverless invocation) safe. See [DECISIONS.md](DECISIONS.md) for the full idempotency design.
-- Query active tickets from `SUPABASE_SCHEMA`, enrich each with its requester's company (via `customers_info`), and classify SLA status.
+- Fail closed with HTTP 500 `AUDIT_RECIPIENT_EMAIL not configured` when no recipient is set — there is no fallback address.
+- Query active tickets from `SUPABASE_SCHEMA`, enrich each with its requester's company (via `customers_info`, grouped by normalized company name), and classify SLA status **at the real current time** — first response and resolution are judged separately, replicating ticket-system's `assessSla`/`deriveSlaDisplay` (at risk = ≤1h or ≤25% of the window left).
+- Query tickets resolved/closed in the last 7 days (by `resolved_at`) for the "SLA compliance (resolved in last 7 days)" figure, reported separately from "Breached in queue". With no resolved tickets the email shows "—", never 0% or 100%.
+- All dates and times in the email are Europe/Zurich with an explicit CET/CEST suffix. The dedupe slot stays the UTC calendar day.
 - Query shared organization metadata from the `public` schema.
 - Send audit email via Resend; only mark the slot `sent` once Resend confirms acceptance (and records its message id). A send failure marks the slot `failed`, which a later invocation is allowed to retry — but never re-sends once a slot is `sent`.
 - Emit structured logs.
 
-The local YAML schedules 06:00 UTC daily. GitHub workflow ID `294419190` is
-`active` and delivering on schedule (verified 2026-08-01); GitHub's queue
-typically starts the run 2–4h after 06:00 UTC.
+The local YAML schedules 05:17 UTC daily (06:17 CET / 07:17 CEST) — an
+off-peak minute, because GitHub delays top-of-hour crons the most. GitHub
+workflow ID `294419190` is `active` and delivering on schedule (verified
+2026-08-01); with the former `0 6 * * *` schedule the queue started the run
+2–4h late.
 
 ## Audit Health Endpoint
 
@@ -227,7 +232,7 @@ In each case there is no run, no red build and no signal at all: the outage anno
 2. Copy its ping URL (`https://hc-ping.com/<uuid>`) into the repository secret `HC_PING_URL`.
 3. Configure the notification channel — an alternative mailbox, Slack or WhatsApp. **It must not be Resend**, which is part of the delivery path being watched. Verify it with the service's own test button.
 
-Grace is 6h, not 4h, because the scheduled run does not start at 06:00 UTC: GitHub's queue delays it. Observed starts between 2026-07-27 and 2026-08-01 range from 08:30 to 10:04 UTC (2h30m–4h05m late), so two consecutive runs can legitimately sit almost 28h apart. A 6h grace gives a 30h window — still far below the ~46h gap a genuinely missed day produces, so nothing is lost in detection while false alarms are eliminated.
+Grace is 6h, not 4h, because the scheduled run does not start on time: GitHub's queue delays it. (The figures below were observed with the former `0 6 * * *` schedule; the run now targets 05:17 UTC, which only shortens one gap at the switch-over.) Observed starts between 2026-07-27 and 2026-08-01 range from 08:30 to 10:04 UTC (2h30m–4h05m late), so two consecutive runs can legitimately sit almost 28h apart. A 6h grace gives a 30h window — still far below the ~46h gap a genuinely missed day produces, so nothing is lost in detection while false alarms are eliminated.
 
 **Coverage:**
 
@@ -276,13 +281,13 @@ HTTP `POST /mcp`. Every request carries `Authorization: Bearer
 | `suggest_solution` | Generate multilingual support guidance |
 | `update_ticket_status` | Update lifecycle status and optional internal notes |
 | `generate_report` | Generate helpdesk reporting for today, week, or month |
-| `get_sla_audit_report` | Read-only snapshot of active tickets with SLA risk, per-company breakdown, and VIP risks — the same data the daily audit email is built from |
+| `get_sla_audit_report` | Read-only snapshot of active tickets with SLA risk, resolved-window compliance, per-company breakdown, and high-priority SLA risks — the same data the daily audit email is built from |
 
 All MCP tool inputs are validated with Zod before execution.
 
 ### `get_sla_audit_report`
 
-Read-only, no input parameters. Returns compliance %, active-ticket count, a per-company active-ticket breakdown (including an explicit "Unassigned" bucket — no ticket is silently dropped), and a `vip_risks` list ordered by urgency (breached first, then soonest due) with a deterministic `risk_reason` and `required_action` per ticket. `project_id`/`project_name` are always `null` — there is no ticket-to-project relationship in this schema (see [DOMAIN.md](DOMAIN.md)). Company resolution is `tickets.created_by → profiles.id → customers_info` (an application-level relationship, not a database foreign key).
+Read-only, no input parameters. Returns `compliance_percentage` — SLA compliance of tickets resolved in the last 7 days (`compliance_window` holds the counts and per-target tallies; `null` when none were measured) — the breached-in-queue count, active-ticket count, `awaiting_approval` (in_progress tickets with `review_status = pending`), a per-company active-ticket breakdown grouped by normalized company name (including an explicit "Unassigned" bucket — no ticket is silently dropped), and a `vip_risks` list — **high-priority SLA risks** (high/critical tickets that are at risk or breached; the field name is historical, there is no VIP flag) — ordered by urgency (breached first, then soonest due) with a deterministic `risk_reason` and `required_action` per ticket. `project_id`/`project_name` are always `null` — there is no ticket-to-project relationship in this schema (see [DOMAIN.md](DOMAIN.md)). Company resolution is `tickets.created_by → profiles.id → customers_info` (an application-level relationship, not a database foreign key).
 
 ## Production Notes
 

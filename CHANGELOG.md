@@ -2,6 +2,31 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## 2026-11-14 — Daily SLA email: accurate "now", resolved-window compliance, truthful risk text
+
+**Fixed**
+
+- **SLA was evaluated at 00:00 UTC, not at send time.** `AuditService.run` passed the dedupe period start as `now`, so anything that fell due between midnight and the send was reported as on track. SLA is now evaluated at the real invocation time (injectable clock, `AuditService.run({ requestId, now })`); the period remains only the dedupe key. The footer states the real snapshot time.
+- **Risk text could be false.** The old reason used `Math.abs`, so a deadline in the future could read "was due 2h ago", and response/resolution deadlines were collapsed into one. Each target is now judged on its own: "First response overdue by 3h", "First response was 2h late", "Resolution overdue by 4h", "Resolution due in 45m". A ticket with no first response past its response deadline counts as breached even before ticket-system writes `sla_response_breached`.
+- **At-risk threshold now matches the app** (ticket-system `lib/sla-display.ts`): ≤1h remaining or ≤25% of the window, instead of a fixed 4h.
+- **Company count grouped by requester**: two requesters from the same company counted as two companies. Companies are now grouped by normalized `company_name`; requesters without a company stay in "Unassigned".
+- **Tickets waiting for admin approval** (`in_progress` + `review_status = pending`) were listed as needing an agent. They now have their own "Waiting for admin approval" section/count and are excluded from "Unowned".
+
+**Changed**
+
+- **`compliance_percentage` now means "SLA compliance (resolved in last 7 days)"** — tickets resolved/closed in a rolling 7-day window by `resolved_at` (`RESOLVED_WINDOW_DAYS`), response and resolution judged separately like `assessSla`. It is shown separately from **Breached in queue**. With no resolved tickets the email shows "—" / "No resolved tickets in the last 7 days" (and `null` in the API) instead of 0% or 100%. New `compliance_window` object carries the counts and per-target tallies. One extra org-scoped `hd_tickets` query.
+- **"VIP risks" renamed to "High-priority SLA risks"** in the email, verdict and MCP tool description. The JSON field names (`vip_risk`, `vip_risks`, `vip_risk_count`) are unchanged for compatibility. The always-empty "No project on file" segment was removed from risk cards.
+- **All email dates/times are Europe/Zurich with an explicit CET/CEST suffix** (`src/lib/zurich-time.ts`). The dedupe slot deliberately stays the UTC calendar day (see ARCHITECTURE.md).
+- Subject now reads e.g. `[Action required] 4 active tickets · 2 breached · SLA 7d 75% — Org · 14 Nov`.
+- `SlaAuditReport` gains `compliance_window`, `awaiting_approval_count`, `awaiting_approval`; tickets gain `response_status`, `resolution_status`, `response_due_at`, `resolution_due_at`, `first_response_at`, `review_status`, `awaiting_approval`. Audit endpoint `stats` gain `breachedInQueue`, `awaitingApproval`; skipped runs report `compliance: null`.
+- Audit workflow cron moved from `0 6 * * *` to `17 5 * * *` (off-peak minute; GitHub delays top-of-hour schedules). The dead-man's-switch step stays last and conditional.
+
+**Security**
+
+- **Removed the hardcoded fallback recipient.** `AUDIT_RECIPIENT_EMAIL` is now required; without it the run fails closed with HTTP 500 `AUDIT_RECIPIENT_EMAIL not configured` before claiming a slot or reading ticket data. **Verify the variable exists in the Vercel production environment before deploying.**
+
+**Rollback**: revert this commit. No migration; all newly selected columns (`review_status`, `first_response_at`, `first_agent_response_at`, `resolved_at`) already exist on `hd_tickets`.
+
 ## 2026-09-28 — Daily SLA email redesign; stop reporting unmeasured tickets as compliant
 
 **Changed**

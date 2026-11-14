@@ -9,7 +9,7 @@ This file governs how any AI coding agent (Claude Code or otherwise) should work
 Two runtime surfaces ship from the same source tree:
 
 1. **MCP tool server** — 8 tools exposed over stdio and stateless Streamable HTTP `POST /mcp`.
-2. **Audit cron runtime** — `api/cron/audit.ts`, triggered daily at 06:00 UTC by `.github/workflows/audit.yml`, computes SLA compliance and emails a report via Resend.
+2. **Audit cron runtime** — `api/cron/audit.ts`, triggered daily at 05:17 UTC by `.github/workflows/audit.yml`, computes SLA compliance and emails a report via Resend.
 
 ## Non-negotiable architectural facts
 
@@ -23,7 +23,7 @@ Two runtime surfaces ship from the same source tree:
 
 | File | Why it's sensitive |
 |---|---|
-| `src/lib/audit-service.ts` | Owns SLA calculation, dedupe fingerprinting, and email delivery. `AUDIT_RECIPIENT_EMAIL` (falls back to a hardcoded address) is the only per-deployment recipient config. |
+| `src/lib/audit-service.ts` | Owns SLA calculation, dedupe fingerprinting, and email delivery. `AUDIT_RECIPIENT_EMAIL` is the only per-deployment recipient config and is required — there is no fallback; the run fails closed with HTTP 500 when it is missing. |
 | `src/lib/cors.ts` | The only thing standing between the public internet and the audit/health endpoints. |
 | `src/lib/supabase.ts` | Central point for schema selection (`SUPABASE_SCHEMA`) and service-role client construction. |
 | `api/cron/audit.ts`, `api/health/audit.ts` | Publicly routable Vercel functions. Any change here changes what an unauthenticated request can see. |
@@ -62,7 +62,7 @@ There is no lint config beyond the TypeScript compiler (`tsc --noEmit` is litera
 
 ## Phase 1 override
 
-The local Audit YAML is daily at 06:00 UTC; workflow ID `294419190` is `active`
+The local Audit YAML is daily at 05:17 UTC (moved off the top of the hour on 2026-11-14); workflow ID `294419190` is `active`
 and delivering (verified 2026-08-01 — this file previously claimed
 `disabled_manually`, which was stale). Its final step is a dead-man's-switch
 liveness ping that must stay last and must stay conditional on a healthy

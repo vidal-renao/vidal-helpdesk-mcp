@@ -4,6 +4,8 @@ export type TicketStatus =
   | "open" | "in_progress" | "pending_customer"
   | "pending_third_party" | "resolved" | "closed";
 export type TicketSource = "portal" | "email" | "api" | "phone";
+/** Mirrors ticket-system lib/supabase/types.ts TicketReviewStatus. */
+export type TicketReviewStatus = "not_requested" | "pending" | "approved" | "changes_requested";
 export type SentimentType = "calm" | "neutral" | "frustrated" | "urgent" | "angry";
 export type Language = "de" | "en" | "es" | "fr" | "it";
 export type TicketCategory =
@@ -28,6 +30,15 @@ export interface Ticket {
   sla_first_response_due: string | null;
   sla_resolution_due: string | null;
   sla_breached: boolean;
+  sla_response_breached: boolean;
+  sla_resolution_breached: boolean;
+  /** Canonical deadlines written by ticket-system lib/sla.ts; sla_* above are the legacy mirror. */
+  response_due_at: string | null;
+  resolution_due_at: string | null;
+  first_response_at: string | null;
+  first_agent_response_at: string | null;
+  review_status: TicketReviewStatus;
+  deleted_at: string | null;
   resolved_at: string | null;
   closed_at: string | null;
   contains_pii: boolean;

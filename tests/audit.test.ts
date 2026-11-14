@@ -124,9 +124,21 @@ function fakeReport(overrides: Partial<SlaAuditReport> = {}): SlaAuditReport {
     company_count: 2,
     unassigned_ticket_count: 6,
     vip_risk_count: 2,
+    awaiting_approval_count: 0,
+    compliance_window: {
+      days: 7,
+      start: "2026-07-14T10:00:00.000Z",
+      end: "2026-07-21T10:00:00.000Z",
+      resolved_ticket_count: 4,
+      measured_ticket_count: 4,
+      compliant_ticket_count: 3,
+      response: { measured: 4, met: 4 },
+      resolution: { measured: 4, met: 3 },
+    },
     companies: [],
     tickets: [],
     vip_risks: [],
+    awaiting_approval: [],
     action_items: [],
     ...overrides,
   };
@@ -145,6 +157,7 @@ describe("api/cron/audit", () => {
     process.env.RESEND_API_KEY = "re_test";
     process.env.RESEND_FROM_EMAIL = "audit@example.com";
     process.env.ALLOWED_ORIGINS = allowedOrigin;
+    process.env.AUDIT_RECIPIENT_EMAIL = "Ops@Example.com";
 
     process.env.AUDIT_CRON_SECRET = "audit-secret";
 
@@ -223,10 +236,10 @@ describe("api/cron/audit", () => {
     expect(json.auditRun).toEqual({ id: "run-1", claimed: true, skippedReason: null });
     expect(json.emailSent).toBe(true);
     expect(mocks.claimAuditRunSlot).toHaveBeenCalledWith(
-      expect.objectContaining({ organizationId: "org-123", reportType: "sla_daily_audit", recipient: "htcpacoxo31@gmail.com" })
+      expect.objectContaining({ organizationId: "org-123", reportType: "sla_daily_audit", recipient: "ops@example.com" })
     );
     expect(mocks.resendSend).toHaveBeenCalledWith(
-      expect.objectContaining({ from: "audit@example.com", to: "htcpacoxo31@gmail.com" }),
+      expect.objectContaining({ from: "audit@example.com", to: "ops@example.com" }),
       { idempotencyKey: "sla-audit/run-1" }
     );
     expect(mocks.markAuditRunSent).toHaveBeenCalledWith("run-1", "email-123");
@@ -365,7 +378,7 @@ describe("api/cron/audit", () => {
     // claimAuditRunSlot itself owns the failed->pending reclaim logic (tested at
     // the unit level in audit-runs.test.ts); from the service's perspective a
     // reclaimed slot looks identical to a fresh claim.
-    const snapshot = { from: "audit@example.com", to: "htcpacoxo31@gmail.com", subject: "Stable", html: "<p>stored</p>" };
+    const snapshot = { from: "audit@example.com", to: "ops@example.com", subject: "Stable", html: "<p>stored</p>" };
     mocks.claimAuditRunSlot.mockResolvedValue({
       claimed: true,
       id: "run-1",
@@ -418,5 +431,53 @@ describe("api/cron/audit", () => {
       "pre_provider_failure",
       "Supabase tickets query failed: relation does not exist"
     );
+  });
+
+  it("fails closed with a clear 500 when AUDIT_RECIPIENT_EMAIL is not configured (no fallback address)", async () => {
+    delete process.env.AUDIT_RECIPIENT_EMAIL;
+
+    const { res, json } = await callAudit("POST");
+
+    expect(res.statusCode).toBe(500);
+    expect(json.error).toBe("AUDIT_RECIPIENT_EMAIL not configured");
+    expect(mocks.claimAuditRunSlot).not.toHaveBeenCalled();
+    expect(mocks.buildSlaAuditReport).not.toHaveBeenCalled();
+    expect(mocks.resendSend).not.toHaveBeenCalled();
+    expect(res.body).not.toContain("@gmail.com");
+  });
+
+  it("treats a whitespace-only recipient as missing", async () => {
+    process.env.AUDIT_RECIPIENT_EMAIL = "   ";
+
+    const { res, json } = await callAudit("POST");
+
+    // A whitespace-only value already fails env validation (not an email); either way: 500, nothing sent.
+    expect(res.statusCode).toBe(500);
+    expect(typeof json.error).toBe("string");
+    expect(mocks.resendSend).not.toHaveBeenCalled();
+  });
+
+  it("evaluates SLA at the real current time, not at the dedupe period start", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-21T05:17:00.000Z"));
+    try {
+      await callAudit("POST");
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const [, evaluatedAt, period] = mocks.buildSlaAuditReport.mock.calls[0];
+    expect((evaluatedAt as Date).toISOString()).toBe("2026-07-21T05:17:00.000Z");
+    expect((period as { start: Date }).start.toISOString()).toBe("2026-07-21T00:00:00.000Z");
+  });
+
+  it("accepts an injected clock", async () => {
+    const { AuditService } = await import("../src/lib/audit-service.js");
+    const fixed = new Date("2026-07-21T09:42:00.000Z");
+
+    const result = await AuditService.run({ requestId: "req-1", now: () => fixed });
+
+    expect(mocks.buildSlaAuditReport).toHaveBeenCalledWith("org-123", fixed, expect.objectContaining({ start: expect.any(Date) }));
+    expect(result.emailSent).toBe(true);
   });
 });

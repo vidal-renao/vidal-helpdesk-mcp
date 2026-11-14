@@ -14,8 +14,9 @@ tests/
     supabase-mock.ts       # shared chainable/thenable Supabase query-builder mock
   audit.test.ts             # api/cron/audit.ts — CORS, auth, claim/skip orchestration, Resend failure handling
   audit-runs.test.ts        # claimAuditRunSlot unit logic — insert-wins, reclaim, race, stale-pending, period/recipient isolation
-  audit-template.test.ts    # email rendering — companies, VIP risks, empty states, HTML escaping, mobile width
-  sla-audit.test.ts         # buildSlaAuditReport — company grouping, sla_status, vip_risk, ordering, no double-counting
+  audit-template.test.ts    # email rendering — companies, high-priority SLA risks, resolved-window compliance, approval section, Zurich times, empty states, HTML escaping, mobile width
+  zurich-time.test.ts       # Europe/Zurich formatting with CET/CEST across both DST boundaries
+  sla-audit.test.ts         # buildSlaAuditReport — clock, response vs resolution, at-risk rule, resolved-window compliance, approval queue, company-name grouping, ordering
   get-sla-audit-report.test.ts
   health-audit.test.ts      # api/health/audit.ts — auth, health check shape
   create-ticket.test.ts

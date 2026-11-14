@@ -26,14 +26,30 @@ type OperationalState = {
   manualReconciliationRequired: boolean;
 };
 
+/** Thrown (and surfaced as HTTP 500 by api/cron/audit.ts) when no recipient is configured. */
+export const MISSING_RECIPIENT_MESSAGE = "AUDIT_RECIPIENT_EMAIL not configured";
+
+export type AuditRunInput = {
+  requestId: string;
+  /** Clock injection for tests. SLA evaluation uses this real time, not the dedupe period start. */
+  now?: () => Date;
+};
+
 export class AuditService {
-  static async run({ requestId }: { requestId: string }) {
+  static async run({ requestId, now: clock = () => new Date() }: AuditRunInput) {
     const env = getRuntimeEnv({ requireAuditRuntime: true });
     const organizationId = env.MCP_ORGANIZATION_ID!;
-    const recipient = normalizeRecipient(env.AUDIT_RECIPIENT_EMAIL || "htcpacoxo31@gmail.com");
     if (!env.AUDIT_EMAIL_ENABLED) return skipped(organizationId, "disabled", false);
+    // Fail closed: there is deliberately no fallback address. A report about
+    // customer tickets must never go to an address nobody configured.
+    const configuredRecipient = env.AUDIT_RECIPIENT_EMAIL?.trim();
+    if (!configuredRecipient) throw new Error(MISSING_RECIPIENT_MESSAGE);
+    const recipient = normalizeRecipient(configuredRecipient);
 
-    const period = getUtcDayPeriod();
+    const evaluatedAt = clock();
+    // The period is only the dedupe key (one report per UTC calendar day); SLA
+    // state is evaluated at `evaluatedAt`.
+    const period = getUtcDayPeriod(evaluatedAt);
     const claim = await claimAuditRunSlot({ organizationId, reportType: REPORT_TYPE, period, recipient });
     if (!claim.claimed) {
       // claim_failed means the ledger itself is unreachable or misconfigured --
@@ -72,7 +88,7 @@ export class AuditService {
       payload = claim.payloadSnapshot;
     } else {
       try {
-        report = await buildSlaAuditReport(organizationId, period.start, period);
+        report = await buildSlaAuditReport(organizationId, evaluatedAt, period);
         payload = {
           from: env.RESEND_FROM_EMAIL?.trim() || "onboarding@resend.dev",
           to: recipient,
@@ -212,7 +228,14 @@ function result(
     organizationId: report?.organization_id ?? null,
     organizationName: report?.organization_name ?? null,
     stats: report
-      ? { compliance: report.compliance_percentage, totalTickets: report.active_ticket_count, companyCount: report.company_count, vipRiskCount: report.vip_risk_count }
+      ? {
+          compliance: report.compliance_percentage,
+          totalTickets: report.active_ticket_count,
+          breachedInQueue: report.breached_ticket_count,
+          awaitingApproval: report.awaiting_approval_count,
+          companyCount: report.company_count,
+          vipRiskCount: report.vip_risk_count,
+        }
       : null,
     auditRun: { id, claimed: true, skippedReason },
     emailSent,
@@ -232,7 +255,7 @@ function skipped(organizationId: string, reason: string, emailEnabled = true, cl
     generatedAt: new Date().toISOString(),
     organizationId,
     organizationName: null,
-    stats: { compliance: 0, totalTickets: 0, companyCount: 0, vipRiskCount: 0 },
+    stats: { compliance: null, totalTickets: 0, breachedInQueue: 0, awaitingApproval: 0, companyCount: 0, vipRiskCount: 0 },
     auditRun: { id: null, claimed: false, skippedReason: reason },
     emailSent: false,
     emailEnabled,
