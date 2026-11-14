@@ -87,7 +87,7 @@ server.tool(
 
 server.tool(
   "get_sla_audit_report",
-  "Read-only snapshot of currently active tickets with SLA risk detail: compliance %, per-company active-ticket breakdown, VIP risks (company, risk reason, required action, due date), and ordered action items. project_id/project_name are always null — no ticket-to-project relationship exists in this schema.",
+  "Read-only snapshot of currently active tickets with SLA risk detail: SLA compliance % of tickets resolved in the last 7 days (response and resolution judged separately), breached-in-queue count, per-company active-ticket breakdown, high-priority SLA risks in `vip_risks` (high/critical tickets at risk or breached: company, risk reason, required action, due date), tickets waiting for admin approval, and ordered action items. project_id/project_name are always null — no ticket-to-project relationship exists in this schema.",
   getSlaAuditReportSchema.shape,
   createValidatedToolHandler(getSlaAuditReportSchema, getSlaAuditReport)
 );

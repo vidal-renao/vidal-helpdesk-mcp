@@ -1,4 +1,5 @@
 import type { AuditHealth, CompanySummary, SlaAuditReport, SlaAuditTicket } from "./sla-audit.js";
+import { formatZurichDateTime, formatZurichLongDate, formatZurichShortDate } from "./zurich-time.js";
 
 /**
  * Daily SLA brief. Layout is table-based with inline styles only: Gmail strips
@@ -53,47 +54,20 @@ function plural(count: number, one: string, many = `${one}s`): string {
 
 function formatDueDate(iso: string | null): string {
   if (!iso) return "No due date on file";
-  const date = new Date(iso);
-  if (!Number.isFinite(date.getTime())) return "Invalid due date";
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
-}
-
-function formatReportDate(iso: string): string {
-  const date = new Date(iso);
-  if (!Number.isFinite(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
-}
-
-function formatShortDate(iso: string): string {
-  const date = new Date(iso);
-  if (!Number.isFinite(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(date);
-}
-
-function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (!Number.isFinite(date.getTime())) return "";
-  return `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")} UTC`;
+  return formatZurichDateTime(iso) || "Invalid due date";
 }
 
 /** One sentence that answers "do I need to do anything today?". */
 export function describeVerdict(report: SlaAuditReport): string {
   if (report.active_ticket_count === 0) return "No active tickets. Nothing is waiting on the team.";
   if (report.breached_ticket_count > 0) {
-    return `${plural(report.breached_ticket_count, "ticket has", "tickets have")} breached SLA and need escalation today.`;
+    return `${plural(report.breached_ticket_count, "ticket in the queue has", "tickets in the queue have")} breached SLA and need escalation today.`;
   }
   if (report.vip_risk_count > 0) {
     return `${plural(report.vip_risk_count, "high-priority ticket is", "high-priority tickets are")} close to breaching SLA.`;
   }
-  if (report.compliance_percentage === null) {
-    return `${plural(report.active_ticket_count, "active ticket")}, none with an SLA deadline — compliance cannot be measured.`;
+  if (report.sla_measured_ticket_count === 0) {
+    return `${plural(report.active_ticket_count, "active ticket")}, none with an SLA deadline — the queue cannot be measured against SLA.`;
   }
   if (report.at_risk_ticket_count > 0) {
     return `${plural(report.at_risk_ticket_count, "ticket is", "tickets are")} approaching the SLA deadline.`;
@@ -101,18 +75,28 @@ export function describeVerdict(report: SlaAuditReport): string {
   if (report.unowned_ticket_count > 0) {
     return `Within SLA, but ${plural(report.unowned_ticket_count, "ticket has", "tickets have")} no assigned agent.`;
   }
+  if (report.awaiting_approval_count > 0) {
+    return `Within SLA, but ${plural(report.awaiting_approval_count, "ticket is", "tickets are")} waiting for admin approval.`;
+  }
   if (report.sla_unmeasured_ticket_count > 0) {
     return `Within SLA, but ${plural(report.sla_unmeasured_ticket_count, "ticket has", "tickets have")} no SLA deadline.`;
   }
   return `${plural(report.active_ticket_count, "active ticket")}, all within SLA and owned.`;
 }
 
+/** Subject fragment for resolved-window compliance; never a fake 0%/100%. */
+function complianceSubject(report: SlaAuditReport): string {
+  const days = report.compliance_window.days;
+  if (report.compliance_percentage !== null) return `SLA ${days}d ${report.compliance_percentage}%`;
+  return report.compliance_window.resolved_ticket_count === 0 ? `no resolved tickets in ${days}d` : `SLA ${days}d not measured`;
+}
+
 export function getAuditEmailSubject(report: SlaAuditReport): string {
   const org = report.organization_name ? ` — ${report.organization_name}` : "";
-  const day = formatShortDate(report.reporting_period.start);
-  const compliance =
-    report.compliance_percentage === null ? "SLA not measured" : `${report.compliance_percentage}% SLA`;
-  const parts = [`${plural(report.active_ticket_count, "active ticket")}`, compliance];
+  const day = formatZurichShortDate(report.generated_at);
+  const parts = [`${plural(report.active_ticket_count, "active ticket")}`];
+  if (report.breached_ticket_count > 0) parts.push(`${report.breached_ticket_count} breached`);
+  parts.push(complianceSubject(report));
   if (report.unowned_ticket_count > 0) parts.push(`${report.unowned_ticket_count} unowned`);
   return `[${HEALTH[report.health].label}] ${parts.join(" · ")}${org} · ${day}`;
 }
@@ -132,6 +116,11 @@ function buildTodayActions(report: SlaAuditReport): string[] {
   if (report.unowned_ticket_count > 0) {
     actions.push(
       `Assign an agent to ${plural(report.unowned_ticket_count, "active ticket")} that nobody currently owns.`
+    );
+  }
+  if (report.awaiting_approval_count > 0) {
+    actions.push(
+      `Review ${plural(report.awaiting_approval_count, "ticket")} waiting for admin approval.`
     );
   }
   if (report.sla_unmeasured_ticket_count > 0) {
@@ -195,14 +184,26 @@ function renderActions(actions: string[], accent: string): string {
       </tr>`;
 }
 
-function renderVipRiskItem(ticket: SlaAuditTicket): string {
+function describeDeadlines(ticket: SlaAuditTicket): string {
+  const parts: string[] = [];
+  if (ticket.response_due_at) {
+    parts.push(
+      ticket.first_response_at
+        ? `First response due ${formatDueDate(ticket.response_due_at)} (answered ${formatDueDate(ticket.first_response_at)})`
+        : `First response due ${formatDueDate(ticket.response_due_at)}`
+    );
+  }
+  if (ticket.resolution_due_at) parts.push(`Resolution due ${formatDueDate(ticket.resolution_due_at)}`);
+  return parts.length > 0 ? parts.join(" · ") : formatDueDate(ticket.due_at);
+}
+
+function renderRiskItem(ticket: SlaAuditTicket): string {
   const company = escapeHtml(ticket.company_name ?? "Company not assigned");
-  const project = ticket.project_name ? escapeHtml(ticket.project_name) : "No project on file";
   const reference = escapeHtml(ticket.ticket_reference ?? ticket.ticket_id);
   const title = escapeHtml(ticket.ticket_title);
   const reason = escapeHtml(ticket.risk_reason ?? "SLA risk detected.");
   const action = escapeHtml(ticket.required_action ?? "Review required.");
-  const due = formatDueDate(ticket.due_at);
+  const due = escapeHtml(describeDeadlines(ticket));
   const accent = ticket.sla_status === "breached" ? HEALTH.action_required.accent : HEALTH.attention.accent;
   const tint = ticket.sla_status === "breached" ? HEALTH.action_required.tint : HEALTH.attention.tint;
 
@@ -212,7 +213,7 @@ function renderVipRiskItem(ticket: SlaAuditTicket): string {
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${tint}; border-left:3px solid ${accent};">
                   <tr>
                     <td style="padding:12px 14px; font-family:${FONT};">
-                      <div style="font-size:12px; font-weight:700; color:${INK};">${company} / ${project} / ${reference}</div>
+                      <div style="font-size:12px; font-weight:700; color:${INK};">${company} / ${reference} · ${escapeHtml(ticket.priority)}</div>
                       <div style="font-size:14px; color:${INK}; padding:4px 0;">${title}</div>
                       <div style="font-size:12px; line-height:18px; color:${MUTED};"><strong style="color:${INK};">Risk:</strong> ${reason}</div>
                       <div style="font-size:12px; line-height:18px; color:${MUTED};"><strong style="color:${INK};">Action:</strong> ${action}</div>
@@ -224,17 +225,43 @@ function renderVipRiskItem(ticket: SlaAuditTicket): string {
             </tr>`;
 }
 
-function renderVipRisks(report: SlaAuditReport): string {
+function renderHighPriorityRisks(report: SlaAuditReport): string {
   const body =
     report.vip_risks.length > 0
       ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${report.vip_risks
-          .map(renderVipRiskItem)
+          .map(renderRiskItem)
           .join("")}
           </table>`
-      : `<div style="font-family:${FONT}; font-size:14px; color:${HEALTH.healthy.accent};">No VIP risks detected.</div>`;
+      : `<div style="font-family:${FONT}; font-size:14px; color:${HEALTH.healthy.accent};">No high-priority SLA risks.</div>`;
   return `
       <tr>
         <td style="padding:0 32px;">${body}</td>
+      </tr>`;
+}
+
+function renderAwaitingApproval(report: SlaAuditReport): string {
+  if (report.awaiting_approval.length === 0) return "";
+  const rows = report.awaiting_approval
+    .map((ticket) => {
+      const reference = escapeHtml(ticket.ticket_reference ?? ticket.ticket_id.slice(0, 8));
+      const company = escapeHtml(ticket.company_name ?? "No company on file");
+      const age = ticket.age_days == null ? "—" : `${ticket.age_days}d`;
+      const sla =
+        ticket.sla_status === "breached" ? "SLA breached" : ticket.sla_status === "at_risk" ? "SLA at risk" : "";
+      return `
+            <tr>
+              <td style="padding:8px 0; border-top:1px solid ${LINE}; font-family:${MONO}; font-size:12px; font-weight:700; color:${INK};">${reference}</td>
+              <td style="padding:8px 6px; border-top:1px solid ${LINE}; font-family:${FONT}; font-size:12px; color:${INK};">${company}${sla ? ` <span style="color:${HEALTH.attention.accent}; font-weight:700;">· ${sla}</span>` : ""}</td>
+              <td align="right" style="padding:8px 0; border-top:1px solid ${LINE}; font-family:${MONO}; font-size:12px; color:${INK};">${age}</td>
+            </tr>`;
+    })
+    .join("");
+  return `${sectionTitle("Waiting for admin approval", plural(report.awaiting_approval_count, "ticket"))}
+      <tr>
+        <td style="padding:0 32px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows}
+          </table>
+        </td>
       </tr>`;
 }
 
@@ -242,7 +269,7 @@ function ticketUrgency(ticket: SlaAuditTicket): number {
   if (ticket.sla_status === "breached") return 0;
   if (ticket.sla_status === "at_risk") return 1;
   if (HIGH_PRIORITIES.has(ticket.priority)) return 2;
-  if (!ticket.has_owner) return 3;
+  if (!ticket.has_owner && !ticket.awaiting_approval) return 3;
   return 4;
 }
 
@@ -254,9 +281,11 @@ function renderTicketRow(ticket: SlaAuditTicket): string {
   const priority = HIGH_PRIORITIES.has(ticket.priority)
     ? `<strong style="color:${HEALTH.action_required.accent};">${escapeHtml(ticket.priority)}</strong>`
     : escapeHtml(ticket.priority);
-  const owner = ticket.has_owner
-    ? `<span style="color:${MUTED};">Assigned</span>`
-    : `<span style="color:${HEALTH.attention.accent}; font-weight:700;">Unowned</span>`;
+  const owner = ticket.awaiting_approval
+    ? `<span style="color:${MUTED};">Awaiting approval</span>`
+    : ticket.has_owner
+      ? `<span style="color:${MUTED};">Assigned</span>`
+      : `<span style="color:${HEALTH.attention.accent}; font-weight:700;">Unowned</span>`;
   const sla =
     ticket.sla_status === "breached"
       ? `<span style="color:${HEALTH.action_required.accent}; font-weight:700;">Breached</span>`
@@ -359,24 +388,37 @@ export function getAuditEmailHtml(report: SlaAuditReport, options: AuditEmailOpt
   const health = HEALTH[report.health];
   const verdict = escapeHtml(describeVerdict(report));
   const org = report.organization_name ? escapeHtml(report.organization_name) : "Helpdesk";
-  const reportDate = formatReportDate(report.reporting_period.start);
+  const reportDate = formatZurichLongDate(report.generated_at);
   const actions = buildTodayActions(report);
+  const window = report.compliance_window;
 
   const complianceValue = report.compliance_percentage === null ? "—" : `${report.compliance_percentage}%`;
   const complianceNote =
-    report.compliance_percentage === null
-      ? `0 of ${report.active_ticket_count} have an SLA`
-      : `${report.sla_measured_ticket_count} of ${report.active_ticket_count} measured`;
+    window.resolved_ticket_count === 0
+      ? `No resolved tickets in the last ${window.days} days`
+      : report.compliance_percentage === null
+        ? `resolved in last ${window.days} days · none had an SLA`
+        : `resolved in last ${window.days} days · ${window.compliant_ticket_count} of ${window.measured_ticket_count} met`;
   const complianceColor =
     report.compliance_percentage === null
       ? FAINT
       : report.compliance_percentage >= 95
         ? HEALTH.healthy.accent
         : HEALTH.action_required.accent;
+  const breachedColor = report.breached_ticket_count > 0 ? HEALTH.action_required.accent : INK;
+  const breachedNote =
+    report.at_risk_ticket_count > 0 ? `${report.at_risk_ticket_count} more at risk` : "of active tickets";
   const unownedColor = report.unowned_ticket_count > 0 ? HEALTH.attention.accent : INK;
-  const oldestColor =
-    report.oldest_active_age_days != null && report.oldest_active_age_days >= STALE_AGE_DAYS ? HEALTH.attention.accent : INK;
-  const oldest = report.oldest_active_age_days == null ? "—" : `${report.oldest_active_age_days}d`;
+  const activeNoteParts = [
+    report.waiting_ticket_count > 0 ? `${report.waiting_ticket_count} waiting on others` : null,
+    report.awaiting_approval_count > 0 ? `${report.awaiting_approval_count} awaiting approval` : null,
+    report.oldest_active_age_days != null ? `oldest ${report.oldest_active_age_days}d` : null,
+  ].filter((part): part is string => part !== null);
+  const activeNote = activeNoteParts.length > 0 ? activeNoteParts.join(" · ") : "tickets open";
+  const windowLine =
+    window.resolved_ticket_count === 0
+      ? `SLA compliance (resolved in last ${window.days} days): no resolved tickets since ${formatZurichDateTime(window.start)}.`
+      : `SLA compliance (resolved in last ${window.days} days, since ${formatZurichDateTime(window.start)}): ${plural(window.resolved_ticket_count, "ticket")} resolved · first response met ${window.response.met} of ${window.response.measured} · resolution met ${window.resolution.met} of ${window.resolution.measured}.`;
 
   // Hidden preheader: the line inbox previews show next to the subject.
   const preheader = `${health.label}: ${verdict}`;
@@ -418,30 +460,35 @@ export function getAuditEmailHtml(report: SlaAuditReport, options: AuditEmailOpt
         <td style="padding:0 20px; border-bottom:1px solid ${LINE};">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
             <tr>${kpiCell("SLA compliance", complianceValue, complianceNote, complianceColor)}${kpiCell(
-              "Active",
-              String(report.active_ticket_count),
-              report.waiting_ticket_count > 0 ? `${report.waiting_ticket_count} waiting on others` : "tickets open"
-            )}${kpiCell("Unowned", String(report.unowned_ticket_count), "no agent assigned", unownedColor)}${kpiCell(
-              "Oldest open",
-              oldest,
-              report.vip_risk_count > 0 ? plural(report.vip_risk_count, "VIP risk") : "no VIP risks",
-              oldestColor,
+              "Breached in queue",
+              String(report.breached_ticket_count),
+              breachedNote,
+              breachedColor
+            )}${kpiCell("Active", String(report.active_ticket_count), activeNote)}${kpiCell(
+              "Unowned",
+              String(report.unowned_ticket_count),
+              "no agent assigned",
+              unownedColor,
               true
             )}
             </tr>
           </table>
         </td>
       </tr>
+      <tr>
+        <td style="padding:10px 32px; border-bottom:1px solid ${LINE}; font-family:${FONT}; font-size:11px; line-height:16px; color:${MUTED};">${escapeHtml(windowLine)}</td>
+      </tr>
 ${sectionTitle("Today", actions.length > 0 ? plural(actions.length, "action") : "")}${renderActions(actions, health.accent)}
-${sectionTitle("VIP risks")}${renderVipRisks(report)}
+${sectionTitle("High-priority SLA risks", report.vip_risk_count > 0 ? plural(report.vip_risk_count, "ticket") : "")}${renderHighPriorityRisks(report)}
+${renderAwaitingApproval(report)}
 ${renderTickets(report)}
 ${renderCompanies(report)}
 ${renderButton(options.dashboardUrl)}
       <tr>
         <td style="padding:32px 32px 26px;">
           <div style="border-top:1px solid ${LINE}; padding-top:14px; font-family:${FONT}; font-size:11px; line-height:17px; color:${FAINT};">
-            Snapshot taken ${formatTime(report.generated_at)} from the live ticket queue. Sent once a day to the operations recipient.<br>
-            VIDAL Helpdesk AI Audit · SLA status is computed from ticket deadlines; tickets without a deadline are reported, not counted as compliant.
+            Snapshot taken ${escapeHtml(formatZurichDateTime(report.generated_at))} from the live ticket queue. Sent once a day to the operations recipient. All times Europe/Zurich.<br>
+            VIDAL Helpdesk AI Audit · SLA compliance counts tickets resolved in the last ${window.days} days (first response and resolution judged separately); queue status is computed live from ticket deadlines. Tickets without a deadline are reported, not counted as compliant. High-priority SLA risks are high/critical tickets that are at risk or breached.
           </div>
         </td>
       </tr>
