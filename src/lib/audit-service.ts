@@ -11,7 +11,7 @@ import {
   type AuditRunStatus,
   type DeliveryPayload,
 } from "./audit-runs.js";
-import { auditTemplate, getAuditEmailSubject } from "./audit-template.js";
+import { auditTemplate, getAuditEmailSubject, getAuditEmailText } from "./audit-template.js";
 import { getRuntimeEnv } from "./env.js";
 import { logError, logInfo } from "./logger.js";
 import { classifyResendException, classifyResendResponse } from "./resend-outcome.js";
@@ -94,6 +94,7 @@ export class AuditService {
           to: recipient,
           subject: getAuditEmailSubject(report),
           html: auditTemplate(report, { dashboardUrl: env.AUDIT_DASHBOARD_URL ?? null }),
+          text: getAuditEmailText(report, { dashboardUrl: env.AUDIT_DASHBOARD_URL ?? null }),
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Audit report generation failed";

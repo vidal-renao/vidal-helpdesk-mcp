@@ -2,6 +2,22 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## Unreleased — Enterprise email design
+
+**Changed** (presentation only — numbers, sections, subject line and finding wording are unchanged)
+
+- **Daily SLA brief redesigned** (`src/lib/audit-template.ts`) in the VIDAL ECOSYSTEM brand: navy header band with a text wordmark "VIDAL ECOSYSTEM" and "HelpDesk AI · Daily SLA brief", organization and Zurich date/time on the right, thin accent rule; severity-coloured status banner; four KPI tiles (SLA compliance 7d, Breached in queue, Active, Unowned) that stack 2x2 under 480px; sections as white cards with counts — Today's actions (numbered), Waiting for admin approval, High-priority SLA risks (priority/status badges), Active tickets (zebra rows, SLA pills, right-aligned age), Companies.
+- **Footer** now states the source ("HelpDesk AI live ticket queue (Supabase), evaluated by the vidal-helpdesk-mcp SLA audit"), snapshot time, methodology note, recipient note, "© {year} VIDAL ECOSYSTEM · Basel, Switzerland" and a no-reply line.
+- Email-client hardening: 640px table layout, `role="presentation"` on every table, `bgcolor` attributes alongside inline styles, MSO wrapper for Outlook, `color-scheme: light`, no images or external URLs, tabular numbers; the only `<style>` block is a mobile media query (progressive enhancement). Verified no horizontal overflow at 340/360/375px.
+
+**Added**
+
+- **Plain-text alternative** `getAuditEmailText(report, options)` with header, sections and the same footer. It is sent as Resend `text` alongside `html`. Both renderers share one view model, so they cannot drift.
+- `DeliveryPayload.text` (optional). `stablePayloadHash` includes it only when present, so persisted html-only snapshots keep their hash and still retry; `validSnapshot` accepts snapshots with or without `text`.
+- `escapeHtml` also escapes backticks.
+
+**Rollback**: revert this commit. No migration; `payload_snapshot` is JSON and older rows remain valid.
+
 ## 2026-11-14 — Daily SLA email: accurate "now", resolved-window compliance, truthful risk text
 
 **Fixed**

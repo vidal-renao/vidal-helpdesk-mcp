@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { auditTemplate, getAuditEmailSubject } from "../src/lib/audit-template.js";
+import { auditTemplate, getAuditEmailSubject, getAuditEmailText } from "../src/lib/audit-template.js";
 import type { SlaAuditReport, SlaAuditTicket } from "../src/lib/sla-audit.js";
 
 function baseReport(overrides: Partial<SlaAuditReport> = {}): SlaAuditReport {
@@ -345,7 +345,138 @@ describe("auditTemplate", () => {
   it("stays within a mobile-safe fixed max-width container", () => {
     const html = auditTemplate(baseReport());
 
-    expect(html).toContain("max-width:600px");
+    expect(html).toContain("max-width:640px");
     expect(html).toContain("width:100%");
+  });
+});
+
+describe("auditTemplate — enterprise layout", () => {
+  function fullReport(): SlaAuditReport {
+    const risk = riskTicket({ ticket_title: '<script>alert("x")</script> VPN outage' });
+    return baseReport({
+      health: "action_required",
+      active_ticket_count: 1,
+      sla_measured_ticket_count: 1,
+      breached_ticket_count: 1,
+      vip_risk_count: 1,
+      company_count: 1,
+      vip_risks: [risk],
+      tickets: [risk],
+      companies: [{ company_id: "a", company_name: "Acme Corp", active_ticket_count: 1 }],
+      action_items: ["TK-0123 (Acme Corp) — Escalate immediately and notify the account owner."],
+    });
+  }
+
+  it("renders a branded header with VIDAL ECOSYSTEM, HelpDesk AI, organization and Zurich date", () => {
+    const html = auditTemplate(baseReport({ generated_at: "2026-11-14T05:17:00.000Z" }));
+    // Header band = everything between the navy cell and the accent rule under it.
+    const header = html.slice(html.indexOf('bgcolor="#0F1B2D"'), html.indexOf('bgcolor="#5B8DB8"'));
+
+    expect(header).toContain("VIDAL&nbsp;ECOSYSTEM");
+    expect(header).toContain("HelpDesk AI &middot; Daily SLA brief");
+    expect(header).toContain("Vidal Lab");
+    expect(header).toContain("Saturday 14 November 2026 &middot; 06:17 CET");
+    expect(header.length).toBeGreaterThan(0);
+  });
+
+  it("renders the footer with source, snapshot, recipient note, copyright and no-reply line", () => {
+    const html = auditTemplate(baseReport({ generated_at: "2026-11-14T05:17:00.000Z" }));
+
+    expect(html).toContain(
+      "Source: HelpDesk AI live ticket queue (Supabase), evaluated by the vidal-helpdesk-mcp SLA audit."
+    );
+    expect(html).toContain("Snapshot taken 2026-11-14 06:17 CET · All times Europe/Zurich.");
+    expect(html).toContain("Sent once a day to the operations recipient.");
+    expect(html).toMatch(/&copy; 2026 <span[^>]*>VIDAL ECOSYSTEM<\/span> &middot; Basel, Switzerland/);
+    expect(html).toContain("Automated message — please do not reply.");
+  });
+
+  it("is email-client safe: presentation tables, lang, light color scheme, no external images", () => {
+    const html = auditTemplate(fullReport(), { dashboardUrl: "https://app.example.ch/dashboard" });
+
+    expect(html).toContain('<html lang="en"');
+    expect(html).toContain('<meta name="color-scheme" content="light">');
+    expect(html).not.toMatch(/<img\b/i);
+    expect(html).not.toMatch(/url\(/i);
+    expect(html).not.toMatch(/src=["']?https?:/i);
+    expect(html).not.toMatch(/display:\s*(flex|grid)/i);
+    const tables = html.match(/<table\b[^>]*>/g) ?? [];
+    expect(tables.length).toBeGreaterThan(0);
+    for (const table of tables) expect(table).toContain('role="presentation"');
+    expect(html).toContain("@media only screen and (max-width:480px)");
+  });
+
+  it("escapes a script injected into a ticket title in the risk card", () => {
+    const html = auditTemplate(fullReport());
+
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; VPN outage");
+  });
+
+  it("keeps the data sections in order with counts", () => {
+    const html = auditTemplate(fullReport());
+    const order = ["Today&#39;s actions", "High-priority SLA risks", "Active tickets", "Companies", "Source:"].map((label) =>
+      html.indexOf(label)
+    );
+
+    expect(order.every((index) => index > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).toContain(">Breached</span>");
+    expect(html).toContain("1 action");
+  });
+
+  it("contains no personal email addresses", () => {
+    const html = auditTemplate(fullReport());
+    expect(html).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
+    expect(getAuditEmailText(fullReport())).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
+  });
+});
+
+describe("getAuditEmailText", () => {
+  it("renders header, verdict, figures, sections and the same footer as plain text", () => {
+    const text = getAuditEmailText(
+      baseReport({
+        generated_at: "2026-11-14T05:17:00.000Z",
+        health: "action_required",
+        active_ticket_count: 1,
+        sla_measured_ticket_count: 1,
+        breached_ticket_count: 1,
+        vip_risk_count: 1,
+        vip_risks: [riskTicket()],
+        tickets: [riskTicket()],
+        action_items: ["TK-0123 (Acme Corp) — Escalate immediately and notify the account owner."],
+      }),
+      { dashboardUrl: "https://app.example.ch/dashboard" }
+    );
+
+    expect(text.startsWith("VIDAL ECOSYSTEM\nHelpDesk AI · Daily SLA brief\nVidal Lab · Saturday 14 November 2026 · 06:17 CET")).toBe(
+      true
+    );
+    expect(text).toContain("ACTION REQUIRED\n1 ticket in the queue has breached SLA and need escalation today.");
+    expect(text).toMatch(/SLA compliance 7d\s+—\s+No resolved tickets in the last 7 days/);
+    expect(text).toContain("TODAY'S ACTIONS (1 action)");
+    expect(text).toContain("  1. TK-0123 (Acme Corp) — Escalate immediately and notify the account owner.");
+    expect(text).toContain("Acme Corp / TK-0123 · high · Breached");
+    expect(text).toContain("Due: Resolution due 2026-07-22 05:00 CEST");
+    expect(text).toContain("TK-0123  Acme Corp (Open · high)  SLA: Breached  Owner: Assigned  Age: 3d");
+    expect(text).toContain("Open the helpdesk dashboard: https://app.example.ch/dashboard");
+    expect(text).toContain(
+      "Source: HelpDesk AI live ticket queue (Supabase), evaluated by the vidal-helpdesk-mcp SLA audit."
+    );
+    expect(text).toContain("Snapshot taken 2026-11-14 06:17 CET · All times Europe/Zurich.");
+    expect(text).toContain("Sent once a day to the operations recipient.");
+    expect(text).toContain("© 2026 VIDAL ECOSYSTEM · Basel, Switzerland");
+    expect(text).toContain("Automated message — please do not reply.");
+    expect(text).not.toMatch(/<[a-z!/]/i);
+  });
+
+  it("shows empty states and omits the dashboard link for non-https URLs", () => {
+    const text = getAuditEmailText(baseReport(), { dashboardUrl: "javascript:alert(1)" });
+
+    expect(text).toContain("No priority follow-ups required.");
+    expect(text).toContain("No high-priority SLA risks.");
+    expect(text).toContain("No companies represented in the current active ticket backlog.");
+    expect(text).not.toContain("javascript:");
+    expect(text).not.toContain("WAITING FOR ADMIN APPROVAL");
   });
 });
