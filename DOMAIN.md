@@ -9,12 +9,12 @@ This repository consumes a domain model it does not own. This document describes
 The core entity. Fields referenced in code (`src/types/index.ts`):
 
 - Identity: `id` (UUID), `ticket_number` (int, rendered as `TK-0042`), `organization_id`
-- Classification: `category_id`, `priority`, `status`, `source`, `tags[]`
+- Classification: `category_id`, `priority`, `status`, `source`, `metadata` (jsonb)
 - Content: `title`, `description`, `detected_language`
 - People: `created_by`, `assigned_to`
 - SLA: `sla_policy_id`, `response_due_at`, `resolution_due_at` (canonical), `sla_first_response_due`, `sla_resolution_due` (legacy mirror), `first_response_at`, `first_agent_response_at`, `sla_breached`, `sla_response_breached`, `sla_resolution_breached`
 - Review: `review_status` (`not_requested | pending | approved | changes_requested`) — `pending` on an `in_progress` ticket means "waiting for admin approval"
-- Lifecycle timestamps: `created_at`, `updated_at`, `resolved_at`, `closed_at`
+- Lifecycle timestamps: `created_at`, `resolved_at`, `closed_at` (there is no `updated_at` column)
 - Privacy: `contains_pii`
 - `metadata` (jsonb, used to carry `requester_name` and `mcp_created: true` — see `create-ticket.ts`)
 
@@ -26,7 +26,7 @@ The core entity. Fields referenced in code (`src/types/index.ts`):
 
 One row per ticket (accessed as a to-one embed in every query, e.g. `ai_analysis(...)`), written by `create_ticket` and `prioritize_incident`:
 
-`suggested_category`, `suggested_priority`, `confidence_score` (0–100), `summary`, `sentiment`, `keywords[]`, `detected_language`, `contains_pii_detected`, `smart_response`, `estimated_resolution_hours`, `reasoning`, `model_used`, `input_tokens`, `output_tokens`, `processing_time_ms`, `raw_response`.
+`suggested_category`, `suggested_priority`, `confidence_score` (0–100), `summary`, `sentiment`, `keywords[]`, `detected_language`, `contains_pii_detected`, `smart_response`, `estimated_resolution_hours`, `reasoning`, `model_used`, `input_tokens`, `output_tokens`, `processing_time_ms`. There is no `raw_response` column; keywords live only in `hd_ai_analysis.keywords`.
 
 **Sentiment**: `calm | neutral | frustrated | urgent | angry`
 

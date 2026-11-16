@@ -2,6 +2,20 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## Unreleased — Phase 0: schema contract fix (DOM-22)
+
+**Fixed**
+
+- `create_ticket` no longer writes `hd_tickets.tags` and `hd_ai_analysis.raw_response`. Neither column exists in production (verified read-only against `information_schema` on 2026-11-16), so PostgREST rejected every insert and the tool could not create tickets.
+- `prioritize_incident` no longer writes `tags`, checks the `error` of its `hd_tickets` update and returns `success: false` instead of claiming "Priority updated" when the write fails. The update is now also scoped by `organization_id`.
+- Both tools report `analysis_saved: false` when the `hd_ai_analysis` write fails instead of ignoring it. Database error text is logged server-side (code only) and is no longer included in the thrown error returned to MCP clients.
+
+**Added**
+
+- `tests/helpers/schema-contract.ts` + `tests/schema-contract.test.ts`: write payloads must be a subset of the production column snapshot. Update the snapshot whenever ticket-system changes a written column.
+
+**Rollback**: revert this commit. No migration and no schema change.
+
 ## Unreleased — Enterprise email design
 
 **Changed** (presentation only — numbers, sections, subject line and finding wording are unchanged)

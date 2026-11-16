@@ -122,6 +122,81 @@ describe("prioritizeIncident", () => {
     expect(updateQuery.update).toHaveBeenCalledWith(expect.objectContaining({ priority: "low" }));
   });
 
+  it("returns success: false and never claims an update when the ticket write fails", async () => {
+    const { prioritizeIncident } = await import("../src/tools/prioritize-incident.js");
+
+    const ticketRow = {
+      id: "ticket-3",
+      ticket_number: 7,
+      title: "VPN outage",
+      description: "VPN is unreachable.",
+      priority: "medium",
+      category_id: "cat-old",
+    };
+    const upsertQuery = createQuery({ data: null, error: null });
+    const from = createFromQueue([
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      {
+        table: "hd_tickets",
+        query: createQuery({ data: null, error: { message: 'column "tags" does not exist' } }),
+      },
+      { table: "hd_ai_analysis", query: upsertQuery },
+    ]);
+    mocks.getSupabaseClient.mockReturnValue({ from });
+    mocks.resolveCategoryId.mockResolvedValue("cat-new");
+    mocks.triageTicket.mockResolvedValue({
+      ...baseTriage,
+      suggested_priority: "critical",
+      confidence_score: 95,
+      summary: "Full outage confirmed",
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await prioritizeIncident({ ticket_ref: "TK-0007" });
+    const parsed = JSON.parse(result);
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.message ?? "").not.toMatch(/Priority updated/);
+    // The database error text is an internal detail and must not reach the caller.
+    expect(result).not.toContain("tags");
+    expect(upsertQuery.upsert).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("reports analysis_saved: false when the analysis upsert fails after the priority update", async () => {
+    const { prioritizeIncident } = await import("../src/tools/prioritize-incident.js");
+
+    const ticketRow = {
+      id: "ticket-4",
+      ticket_number: 8,
+      title: "Printer jam",
+      description: "Printer jammed.",
+      priority: "low",
+      category_id: "cat-old",
+    };
+    const from = createFromQueue([
+      { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+      { table: "hd_tickets", query: createQuery({ data: null, error: null }) },
+      { table: "hd_ai_analysis", query: createQuery({ data: null, error: { message: "boom" } }) },
+    ]);
+    mocks.getSupabaseClient.mockReturnValue({ from });
+    mocks.resolveCategoryId.mockResolvedValue("cat-old");
+    mocks.triageTicket.mockResolvedValue({
+      ...baseTriage,
+      suggested_priority: "medium",
+      confidence_score: 80,
+      summary: "Routine",
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const parsed = JSON.parse(await prioritizeIncident({ ticket_ref: "TK-0008" }));
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.analysis_saved).toBe(false);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("returns success: false when the ticket is not found", async () => {
     const { prioritizeIncident } = await import("../src/tools/prioritize-incident.js");
 

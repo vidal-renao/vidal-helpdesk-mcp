@@ -25,7 +25,6 @@ export interface Ticket {
   status: TicketStatus;
   priority: TicketPriority;
   source: TicketSource;
-  tags: string[];
   sla_policy_id: string | null;
   sla_first_response_due: string | null;
   sla_resolution_due: string | null;

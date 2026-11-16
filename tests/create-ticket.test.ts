@@ -125,6 +125,62 @@ describe("createTicket", () => {
     expect(ticketsQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ priority: "medium", category_id: null }));
   });
 
+  it("throws a generic error without leaking the database message when the insert fails", async () => {
+    const { createTicket } = await import("../src/tools/create-ticket.js");
+
+    const from = createFromQueue([
+      {
+        table: "hd_tickets",
+        query: createQuery({ data: null, error: { message: 'column "tags" of relation "hd_tickets" does not exist' } }),
+      },
+    ]);
+    mocks.getSupabaseClient.mockReturnValue({ from });
+    mocks.resolveCategoryId.mockResolvedValue(null);
+    mocks.triageTicket.mockResolvedValue({ ...baseTriage, suggested_priority: "low", confidence_score: 70, summary: "x" });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const attempt = createTicket({
+      title: "Printer offline again",
+      description: "The printer on floor 2 is offline.",
+      requester_name: "Jane Doe",
+      language: "en",
+      source: "api",
+    });
+
+    await expect(attempt).rejects.toThrow("Failed to create ticket");
+    await expect(attempt).rejects.not.toThrow(/tags|relation/);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("keeps the created ticket and reports analysis_saved: false when the analysis insert fails", async () => {
+    const { createTicket } = await import("../src/tools/create-ticket.js");
+
+    const from = createFromQueue([
+      { table: "hd_tickets", query: createQuery({ data: { id: "t-9", ticket_number: 9, priority: "low" }, error: null }) },
+      { table: "hd_ai_analysis", query: createQuery({ data: null, error: { message: "boom" } }) },
+    ]);
+    mocks.getSupabaseClient.mockReturnValue({ from });
+    mocks.resolveCategoryId.mockResolvedValue(null);
+    mocks.triageTicket.mockResolvedValue({ ...baseTriage, suggested_priority: "low", confidence_score: 70, summary: "x" });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const parsed = JSON.parse(
+      await createTicket({
+        title: "Printer offline again",
+        description: "The printer on floor 2 is offline.",
+        requester_name: "Jane Doe",
+        language: "en",
+        source: "api",
+      })
+    );
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.ticket_ref).toBe("TK-0009");
+    expect(parsed.analysis_saved).toBe(false);
+    consoleError.mockRestore();
+  });
+
   it("throws when MCP_ORGANIZATION_ID or MCP_AGENT_ID is missing", async () => {
     delete process.env.MCP_ORGANIZATION_ID;
     const { createTicket } = await import("../src/tools/create-ticket.js");

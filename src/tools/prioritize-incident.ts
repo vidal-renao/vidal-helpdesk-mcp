@@ -36,15 +36,22 @@ export async function prioritizeIncident(input: PrioritizeIncidentInput): Promis
   const categoryId = await resolveCategoryId(supabase, organizationId, triage.suggested_category);
   const applyPriority = triage.confidence_score >= 60;
 
-  await supabase.from("hd_tickets").update({
+  const { error: updateError } = await supabase.from("hd_tickets").update({
     priority: applyPriority ? triage.suggested_priority : ticket.priority,
     category_id: categoryId ?? ticket.category_id,
     detected_language: triage.detected_language,
     contains_pii: triage.contains_pii,
-    tags: triage.keywords.slice(0, 5),
-  }).eq("id", ticket.id);
+  }).eq("id", ticket.id).eq("organization_id", organizationId);
 
-  await supabase.from("hd_ai_analysis").upsert({
+  if (updateError) {
+    console.error("[prioritize_incident] ticket update failed", {
+      ticket_id: ticket.id,
+      code: (updateError as { code?: string }).code ?? null,
+    });
+    return JSON.stringify({ success: false, ticket_ref: ticketRef, error: `Could not update ${ticketRef}` });
+  }
+
+  const { error: analysisError } = await supabase.from("hd_ai_analysis").upsert({
     ticket_id: ticket.id,
     suggested_category: triage.suggested_category,
     suggested_priority: triage.suggested_priority,
@@ -61,8 +68,13 @@ export async function prioritizeIncident(input: PrioritizeIncidentInput): Promis
     input_tokens: triage.input_tokens,
     output_tokens: triage.output_tokens,
     processing_time_ms: triage.processing_time_ms,
-    raw_response: triage,
   }, { onConflict: "ticket_id" });
+  if (analysisError) {
+    console.error("[prioritize_incident] ai analysis upsert failed", {
+      ticket_id: ticket.id,
+      code: (analysisError as { code?: string }).code ?? null,
+    });
+  }
 
   const priorityChanged = applyPriority && previousPriority !== triage.suggested_priority;
   return JSON.stringify({
@@ -75,6 +87,7 @@ export async function prioritizeIncident(input: PrioritizeIncidentInput): Promis
     priority_changed: priorityChanged,
     sentiment: triage.sentiment,
     reasoning: triage.reasoning,
+    analysis_saved: !analysisError,
     message: priorityChanged
       ? `Priority updated: ${previousPriority} → ${triage.suggested_priority} (confidence: ${triage.confidence_score}%)`
       : `Priority confirmed: ${previousPriority} (confidence: ${triage.confidence_score}%)`,
