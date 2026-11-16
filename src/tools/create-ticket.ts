@@ -36,16 +36,19 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
       status: "open",
       priority: applyAIPriority ? triage.suggested_priority : "medium",
       source: input.source,
-      tags: triage.keywords.slice(0, 5),
       contains_pii: triage.contains_pii,
       metadata: { requester_name: input.requester_name, mcp_created: true },
     })
     .select()
     .single<Ticket>();
 
-  if (error || !ticket) throw new Error(`Failed to create ticket: ${error?.message}`);
+  if (error || !ticket) {
+    // Database text stays in the server log; the MCP client only gets a generic error.
+    console.error("[create_ticket] insert failed", { code: (error as { code?: string } | null)?.code ?? null });
+    throw new Error("Failed to create ticket");
+  }
 
-  await supabase.from("hd_ai_analysis").insert({
+  const { error: analysisError } = await supabase.from("hd_ai_analysis").insert({
     ticket_id: ticket.id,
     suggested_category: triage.suggested_category,
     suggested_priority: triage.suggested_priority,
@@ -62,8 +65,13 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
     input_tokens: triage.input_tokens,
     output_tokens: triage.output_tokens,
     processing_time_ms: triage.processing_time_ms,
-    raw_response: triage,
   });
+  if (analysisError) {
+    console.error("[create_ticket] ai analysis insert failed", {
+      ticket_id: ticket.id,
+      code: (analysisError as { code?: string }).code ?? null,
+    });
+  }
 
   const ticketRef = `TK-${String(ticket.ticket_number).padStart(4, "0")}`;
   return JSON.stringify({
@@ -78,6 +86,7 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
     sla_first_response_due: ticket.sla_first_response_due,
     ai_summary: triage.summary,
     smart_response: triage.smart_response,
+    analysis_saved: !analysisError,
     message: `Ticket ${ticketRef} created. Priority: ${ticket.priority} (confidence: ${triage.confidence_score}%)`,
   });
 }
