@@ -31,6 +31,20 @@ export const HD_AI_ANALYSIS_COLUMNS = new Set([
   "input_tokens", "output_tokens", "processing_time_ms", "created_at",
 ]);
 
+/**
+ * `public.hd_admin_audit_logs` is NOT part of the 2026-11-16 production
+ * snapshot. It is introduced by ticket-system migration 20261117
+ * (admin_audit_logs) in Phase 1 (REQ-F1-06) and must be applied to the
+ * database BEFORE this server is deployed with the update_ticket_status audit
+ * write; until then that write fails and the tool reports `audit_logged: false`.
+ * The list below is the agreed contract with that migration, not a snapshot:
+ * re-verify it against `information_schema` once the migration is applied.
+ */
+export const HD_ADMIN_AUDIT_LOGS_COLUMNS = new Set([
+  "id", "organization_id", "actor_id", "actor_type", "action", "target_type",
+  "target_id", "outcome", "details", "created_at",
+]);
+
 /** Returns the payload keys that do not exist as columns. */
 export function unknownColumns(payload: Record<string, unknown>, columns: Set<string>): string[] {
   return Object.keys(payload).filter((key) => !columns.has(key));

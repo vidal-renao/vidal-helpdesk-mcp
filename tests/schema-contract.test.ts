@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createFromQueue, createQuery } from "./helpers/supabase-mock.js";
-import { HD_AI_ANALYSIS_COLUMNS, HD_TICKETS_COLUMNS, unknownColumns } from "./helpers/schema-contract.js";
+import {
+  HD_ADMIN_AUDIT_LOGS_COLUMNS,
+  HD_AI_ANALYSIS_COLUMNS,
+  HD_TICKETS_COLUMNS,
+  unknownColumns,
+} from "./helpers/schema-contract.js";
 
 const mocks = vi.hoisted(() => ({
   getSupabaseClient: vi.fn(),
@@ -99,5 +104,44 @@ describe("write payloads match the production column contract", () => {
 
     expect(unknownColumns(firstArg(updateQuery.update), HD_TICKETS_COLUMNS)).toEqual([]);
     expect(unknownColumns(firstArg(upsertQuery.upsert), HD_AI_ANALYSIS_COLUMNS)).toEqual([]);
+  });
+
+  it("create_ticket without AI still only writes existing hd_tickets columns", async () => {
+    const { createTicket } = await import("../src/tools/create-ticket.js");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ticketsQuery = createQuery({ data: { id: "t-1", ticket_number: 1, priority: "medium" }, error: null });
+    mocks.getSupabaseClient.mockReturnValue({ from: createFromQueue([{ table: "hd_tickets", query: ticketsQuery }]) });
+    mocks.triageTicket.mockRejectedValue(new Error("no key"));
+
+    await createTicket({
+      title: "VPN is down for the whole office",
+      description: "Nobody can connect to the VPN since this morning.",
+      requester_name: "Jane Doe",
+      language: "en",
+      source: "api",
+    });
+
+    expect(unknownColumns(firstArg(ticketsQuery.insert), HD_TICKETS_COLUMNS)).toEqual([]);
+    consoleError.mockRestore();
+  });
+
+  it("update_ticket_status only writes existing hd_tickets and hd_admin_audit_logs columns", async () => {
+    const { updateTicketStatus } = await import("../src/tools/update-ticket-status.js");
+    const updateQuery = createQuery({ data: null, error: null });
+    const auditQuery = createQuery({ data: null, error: null });
+    const commentQuery = createQuery({ data: { id: "c-1" }, error: null });
+    mocks.getSupabaseClient.mockReturnValue({
+      from: createFromQueue([
+        { table: "hd_tickets", query: createQuery({ data: { id: "t-1", ticket_number: 1, status: "open" }, error: null }) },
+        { table: "hd_tickets", query: updateQuery },
+        { table: "hd_admin_audit_logs", query: auditQuery },
+        { table: "hd_ticket_comments", query: commentQuery },
+      ]),
+    });
+
+    await updateTicketStatus({ ticket_ref: "TK-0001", status: "resolved", comment: "done" });
+
+    expect(unknownColumns(firstArg(updateQuery.update), HD_TICKETS_COLUMNS)).toEqual([]);
+    expect(unknownColumns(firstArg(auditQuery.insert), HD_ADMIN_AUDIT_LOGS_COLUMNS)).toEqual([]);
   });
 });
