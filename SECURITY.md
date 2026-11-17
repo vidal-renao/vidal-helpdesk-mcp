@@ -45,6 +45,16 @@ As of this audit, `api/cron/audit.ts` no longer includes `error.stack` in its HT
 
 From 2026-05-22 to 2026-07-22, `src/lib/audit-runs.ts` read/wrote the audit dedupe table using `SUPABASE_SCHEMA` (`"public"` in production) instead of the literal `helpdesk` schema the table actually lives in — every dedupe check and persistence write silently failed. Combined with an hourly (not daily) GitHub Actions schedule, this sent up to 9 duplicate audit emails in a single day (2026-07-21) with no attacker involved — a correctness/observability gap, not an intrusion. Fixed by pointing `audit-runs.ts` at `getHelpdeskSchema()` explicitly and replacing the fingerprint-based dedupe with an atomic per-day claim (`claimAuditRunSlot`). See `ARCHITECTURE.md` "Idempotency design" and `DECISIONS.md` ADR-009/ADR-010. This class of bug (an env-driven schema selector silently missing a table) is worth remembering when adding any new table this app writes to outside the main ticket domain.
 
+## Audit of MCP writes (Phase 1, REQ-F1-06)
+
+`update_ticket_status` records every successful status change in `hd_admin_audit_logs` (`actor_type: 'mcp'`, `action: 'ticket.status_changed'`, `details: { from, to, ticket_number }`). The row carries no free text: the optional comment is not copied into it. Because the MCP has no per-request user identity, `actor_id` is the deployment's `MCP_AGENT_ID` (or `null`) — the audit proves *that the MCP channel* made the change, not which human asked for it.
+
+The audit write is deliberately non-blocking: if it fails, the error **code** is logged server-side and the tool returns `audit_logged: false` alongside the real result of the status change. Operators should treat `audit_logged: false` in production as an incident (missing table, revoked grant), not as normal. The table is created by ticket-system migration `20261117` (`admin_audit_logs`) and **must exist before this server is deployed**; otherwise status changes succeed without an audit trail. Other MCP writes (`create_ticket`, `prioritize_incident`, `suggest_solution`) are not yet audited in this table.
+
+The same tool now validates `ticket_ref` by regex, caps the comment at 2000 characters, ignores soft-deleted tickets, and no longer returns database error text to the client.
+
+`create_ticket` degrades instead of failing when the AI provider is unavailable. Only the error class is logged — never the provider message (which can echo the prompt, i.e. ticket content) — and the response states plainly that triage did not run. `contains_pii` is `false` on such tickets because nothing was analysed; do not read it as a PII clearance.
+
 ## Rate limiting
 
 No distributed rate limiting exists. Mandatory bearer authentication and the

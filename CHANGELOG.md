@@ -2,6 +2,25 @@
 
 Format: newest first. Entries before 2026-07-21 are reconstructed from git history, not from prior changelog entries (none existed).
 
+## Unreleased — Phase 1: MCP write audit and AI-unavailable fallback (REQ-F1-06, REQ-F1-09)
+
+> **Deploy order (blocking):** ticket-system migration `20261117` (`admin_audit_logs`), which creates `public.hd_admin_audit_logs`, must be applied to the database **before** this change is deployed. If it is not, `update_ticket_status` still changes the status but every call returns `audit_logged: false` and no audit trail is written.
+
+**Added**
+
+- `update_ticket_status` writes an audit event to `hd_admin_audit_logs` after every successful status change: `actor_type: "mcp"`, `action: "ticket.status_changed"`, `target_type: "ticket"`, `outcome: "success"`, `details: { from, to, ticket_number }`. The comment text is never stored in the audit row. The response has a new `audit_logged` boolean; a failed audit write is logged server-side (error code only) and never throws or hides the status change.
+- `create_ticket` no longer fails when AI triage is unavailable (missing `ANTHROPIC_API_KEY`, provider error, unparseable response). The ticket is created with priority `medium`, `category_id: null`, the caller's `language` hint, `contains_pii: false` and `metadata.triage_status: "unavailable"`; no `hd_ai_analysis` row is written. The response has a new `ai_triage` field (`"completed"` | `"unavailable"`). Only the error class is logged.
+- `HD_ADMIN_AUDIT_LOGS_COLUMNS` in `tests/helpers/schema-contract.ts` (agreed contract with the ticket-system migration, to be re-verified against `information_schema` once applied).
+
+**Fixed** (`update_ticket_status`)
+
+- `ticket_ref` is validated (`^TK-?\d{1,7}$` or a UUID). Malformed references used to reach the database as `ticket_number = NaN`.
+- `comment` is capped at 2000 characters.
+- Soft-deleted tickets (`deleted_at` set) can no longer be found or updated; the update itself is now also scoped by `organization_id`.
+- A failed update no longer returns database error text to the MCP client (`Failed to update ticket status`; code logged server-side).
+
+**Rollback**: revert these commits. No migration in this repository; the `hd_admin_audit_logs` table can stay in place.
+
 ## Unreleased — Phase 0: schema contract fix (DOM-22)
 
 **Fixed**
