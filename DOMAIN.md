@@ -30,6 +30,8 @@ One row per ticket (accessed as a to-one embed in every query, e.g. `ai_analysis
 
 **Sentiment**: `calm | neutral | frustrated | urgent | angry`
 
+**No row when AI is unavailable.** If triage throws during `create_ticket` (no API key, provider error, unparseable response), the ticket is still created — priority `medium`, `category_id: null`, `detected_language` from the caller's `language` hint, `contains_pii: false`, `metadata.triage_status: "unavailable"` — and no `hd_ai_analysis` row is written. The tool returns `ai_triage: "unavailable"`; such tickets need manual triage (or a later `prioritize_incident`). `contains_pii: false` here means "not analysed", not "verified free of PII".
+
 ### Category
 
 `categories` table, looked up by `(organization_id, slug, is_active)` via `resolveCategoryId()`. The AI triage prompt constrains categories to a fixed set: `Networking | Hardware | Software | Security | Billing | Other`. If `resolveCategoryId` finds no match, `category_id` is left `null` rather than failing the ticket creation.
@@ -37,6 +39,23 @@ One row per ticket (accessed as a to-one embed in every query, e.g. `ai_analysis
 ### TicketComment
 
 `ticket_comments` table. Written by `suggest_solution` (AI-generated solution, `is_ai_generated: true`) and `update_ticket_status` (human/agent note, `is_ai_generated: false`). All comments written by these tools are `is_internal: true` — there is no customer-visible comment path in this repo.
+
+### AdminAuditLog
+
+`hd_admin_audit_logs` table, owned by ticket-system (migration `20261117`, `admin_audit_logs`; immutable, RLS read for admins of the same organization). This repo only inserts, from `update_ticket_status`, after a successful status change:
+
+| Column | Value written by the MCP |
+|---|---|
+| `organization_id` | `MCP_ORGANIZATION_ID` |
+| `actor_id` | always `null` (the MCP is not a profile); the configured `MCP_AGENT_ID` goes into `details.agent_id` |
+| `actor_type` | `'mcp'` |
+| `action` | `'ticket.status_changed'` |
+| `target_type` | `'ticket'` |
+| `target_id` | ticket UUID |
+| `outcome` | `'success'` |
+| `details` | `{ from, to, ticket_number }` — never the comment text |
+
+Full column list: `id, organization_id, actor_id, actor_type, action, target_type, target_id, outcome, details, created_at`. The write is best-effort: on failure the status change stands and the tool returns `audit_logged: false`. **Deploy order:** the ticket-system migration must be applied before this server is deployed with the audit write.
 
 ### Organization
 

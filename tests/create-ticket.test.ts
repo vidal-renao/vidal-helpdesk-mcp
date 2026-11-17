@@ -195,4 +195,90 @@ describe("createTicket", () => {
       })
     ).rejects.toThrow("Missing MCP_ORGANIZATION_ID or MCP_AGENT_ID");
   });
+
+  describe("when AI triage is unavailable (REQ-F1-09)", () => {
+    const input = {
+      title: "Laptop does not boot at all",
+      description: "Confidential detail: the CFO laptop shows a black screen.",
+      requester_name: "Jane Doe",
+      language: "de" as const,
+      source: "api" as const,
+    };
+
+    it("still creates the ticket with medium priority and no analysis row", async () => {
+      const { createTicket } = await import("../src/tools/create-ticket.js");
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const ticketsQuery = createQuery({
+        data: { id: "ticket-7", ticket_number: 7, priority: "medium", sla_first_response_due: null },
+        error: null,
+      });
+      // Only one from() call is queued: an hd_ai_analysis insert would throw.
+      const from = createFromQueue([{ table: "hd_tickets", query: ticketsQuery }]);
+      mocks.getSupabaseClient.mockReturnValue({ from });
+      mocks.triageTicket.mockRejectedValue(new TypeError("provider said: invalid x-api-key sk-secret"));
+
+      const raw = await createTicket(input);
+      const parsed = JSON.parse(raw);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.ticket_ref).toBe("TK-0007");
+      expect(parsed.priority).toBe("medium");
+      expect(parsed.ai_triage).toBe("unavailable");
+      expect(parsed.analysis_saved).toBe(false);
+      expect(parsed.message).toMatch(/AI triage (was )?unavailable/i);
+      expect(raw).not.toContain("sk-secret");
+      expect(raw).not.toContain("provider said");
+
+      const payload = (ticketsQuery.insert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(payload).toMatchObject({
+        organization_id: "org-123",
+        created_by: "agent-456",
+        priority: "medium",
+        category_id: null,
+        detected_language: "de",
+        contains_pii: false,
+        status: "open",
+        metadata: { requester_name: "Jane Doe", mcp_created: true, triage_status: "unavailable" },
+      });
+      expect(mocks.resolveCategoryId).not.toHaveBeenCalled();
+      expect(from).toHaveBeenCalledTimes(1);
+      consoleError.mockRestore();
+    });
+
+    it("logs only the error class, never the provider message or ticket content", async () => {
+      const { createTicket } = await import("../src/tools/create-ticket.js");
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      mocks.getSupabaseClient.mockReturnValue({
+        from: createFromQueue([
+          { table: "hd_tickets", query: createQuery({ data: { id: "t-8", ticket_number: 8, priority: "medium" }, error: null }) },
+        ]),
+      });
+      mocks.triageTicket.mockRejectedValue(new TypeError("provider said: invalid x-api-key sk-secret"));
+
+      await createTicket(input);
+
+      const logged = JSON.stringify(consoleError.mock.calls);
+      expect(logged).toContain("TypeError");
+      expect(logged).not.toContain("sk-secret");
+      expect(logged).not.toContain("provider said");
+      expect(logged).not.toContain("CFO laptop");
+      expect(logged).not.toContain("Laptop does not boot");
+      consoleError.mockRestore();
+    });
+
+    it("reports ai_triage completed on the normal path", async () => {
+      const { createTicket } = await import("../src/tools/create-ticket.js");
+      mocks.getSupabaseClient.mockReturnValue({
+        from: createFromQueue([
+          { table: "hd_tickets", query: createQuery({ data: { id: "t-9", ticket_number: 9, priority: "high" }, error: null }) },
+          { table: "hd_ai_analysis", query: createQuery({ data: null, error: null }) },
+        ]),
+      });
+      mocks.resolveCategoryId.mockResolvedValue("category-1");
+      mocks.triageTicket.mockResolvedValue({ ...baseTriage, suggested_priority: "high", confidence_score: 90, summary: "s" });
+
+      const parsed = JSON.parse(await createTicket({ ...input, language: "en" }));
+      expect(parsed.ai_triage).toBe("completed");
+    });
+  });
 });

@@ -20,9 +20,20 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
   const agentId = process.env.MCP_AGENT_ID;
   if (!organizationId || !agentId) throw new Error("Missing MCP_ORGANIZATION_ID or MCP_AGENT_ID");
 
-  const triage = await triageTicket(input.title, input.description);
-  const categoryId = await resolveCategoryId(supabase, organizationId, triage.suggested_category);
-  const applyAIPriority = triage.confidence_score >= 60;
+  // REQ-F1-09: a failing AI provider must not block ticket intake. The ticket is
+  // created untriaged (same as the web app) and flagged for later triage.
+  let triage: Awaited<ReturnType<typeof triageTicket>> | null = null;
+  try {
+    triage = await triageTicket(input.title, input.description);
+  } catch (triageError) {
+    // Error class only: the provider message can echo the prompt (ticket content) or key hints.
+    console.error("[create_ticket] ai triage unavailable", {
+      error_class: triageError instanceof Error ? triageError.constructor.name : typeof triageError,
+    });
+  }
+
+  const categoryId = triage ? await resolveCategoryId(supabase, organizationId, triage.suggested_category) : null;
+  const applyAIPriority = triage !== null && triage.confidence_score >= 60;
 
   const { data: ticket, error } = await supabase
     .from("hd_tickets")
@@ -32,12 +43,14 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
       category_id: categoryId,
       title: input.title,
       description: input.description,
-      detected_language: triage.detected_language,
+      detected_language: triage ? triage.detected_language : input.language,
       status: "open",
-      priority: applyAIPriority ? triage.suggested_priority : "medium",
+      priority: triage && applyAIPriority ? triage.suggested_priority : "medium",
       source: input.source,
-      contains_pii: triage.contains_pii,
-      metadata: { requester_name: input.requester_name, mcp_created: true },
+      contains_pii: triage ? triage.contains_pii : false,
+      metadata: triage
+        ? { requester_name: input.requester_name, mcp_created: true }
+        : { requester_name: input.requester_name, mcp_created: true, triage_status: "unavailable" },
     })
     .select()
     .single<Ticket>();
@@ -46,6 +59,22 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
     // Database text stays in the server log; the MCP client only gets a generic error.
     console.error("[create_ticket] insert failed", { code: (error as { code?: string } | null)?.code ?? null });
     throw new Error("Failed to create ticket");
+  }
+
+  const ticketRef = `TK-${String(ticket.ticket_number).padStart(4, "0")}`;
+
+  if (!triage) {
+    return JSON.stringify({
+      success: true,
+      ticket_ref: ticketRef,
+      ticket_id: ticket.id,
+      priority: ticket.priority,
+      ai_triage: "unavailable",
+      detected_language: input.language,
+      sla_first_response_due: ticket.sla_first_response_due,
+      analysis_saved: false,
+      message: `Ticket ${ticketRef} created with default priority ${ticket.priority}. AI triage was unavailable: no category, summary or suggested response was generated, and the ticket needs manual triage.`,
+    });
   }
 
   const { error: analysisError } = await supabase.from("hd_ai_analysis").insert({
@@ -73,12 +102,12 @@ export async function createTicket(input: CreateTicketInput): Promise<string> {
     });
   }
 
-  const ticketRef = `TK-${String(ticket.ticket_number).padStart(4, "0")}`;
   return JSON.stringify({
     success: true,
     ticket_ref: ticketRef,
     ticket_id: ticket.id,
     priority: ticket.priority,
+    ai_triage: "completed",
     category: triage.suggested_category,
     confidence: triage.confidence_score,
     sentiment: triage.sentiment,
