@@ -48,6 +48,74 @@ describe("updateTicketStatus", () => {
     expect(updatePayload.closed_at).toBeUndefined();
   });
 
+  describe("resolution SLA verdict (REQ-F1-03)", () => {
+    async function resolve(ticketRow: Record<string, unknown>) {
+      const { updateTicketStatus } = await import("../src/tools/update-ticket-status.js");
+      const updateQuery = createQuery({ data: null, error: null });
+      mocks.getSupabaseClient.mockReturnValue({
+        from: createFromQueue([
+          { table: "hd_tickets", query: createQuery({ data: ticketRow, error: null }) },
+          { table: "hd_tickets", query: updateQuery },
+          { table: "hd_admin_audit_logs", query: createQuery({ data: null, error: null }) },
+        ]),
+      });
+      await updateTicketStatus({ ticket_ref: "TK-0020", status: "resolved" });
+      return (updateQuery.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    }
+    const base = { id: "ticket-20", ticket_number: 20, status: "in_progress", priority: "high", title: "Late" };
+
+    it("marks a late resolution as breached and keeps a response breach in the aggregate", async () => {
+      const payload = await resolve({
+        ...base,
+        resolution_due_at: "2000-01-01T00:00:00.000Z",
+        sla_response_breached: false,
+      });
+      expect(payload).toMatchObject({ sla_resolution_breached: true, sla_resolution_met: false, sla_breached: true });
+    });
+
+    it("marks an on-time resolution as met", async () => {
+      const payload = await resolve({
+        ...base,
+        resolution_due_at: "2999-01-01T00:00:00.000Z",
+        sla_response_breached: false,
+      });
+      expect(payload).toMatchObject({ sla_resolution_breached: false, sla_resolution_met: true, sla_breached: false });
+    });
+
+    it("falls back to the legacy deadline column and keeps an earlier response breach", async () => {
+      const payload = await resolve({
+        ...base,
+        resolution_due_at: null,
+        sla_resolution_due: "2999-01-01T00:00:00.000Z",
+        sla_response_breached: true,
+      });
+      expect(payload).toMatchObject({ sla_resolution_met: true, sla_breached: true });
+    });
+
+    it("writes no verdict when the ticket has no resolution deadline", async () => {
+      const payload = await resolve({ ...base, resolution_due_at: null, sla_resolution_due: null });
+      expect(payload).not.toHaveProperty("sla_resolution_met");
+      expect(payload).not.toHaveProperty("sla_resolution_breached");
+    });
+  });
+
+  it("records the MCP actor in details, not in the profile foreign key", async () => {
+    const { updateTicketStatus } = await import("../src/tools/update-ticket-status.js");
+    const auditQuery = createQuery({ data: null, error: null });
+    mocks.getSupabaseClient.mockReturnValue({
+      from: createFromQueue([
+        { table: "hd_tickets", query: createQuery({ data: { id: "t-30", ticket_number: 30, status: "open", priority: "low", title: "x" }, error: null }) },
+        { table: "hd_tickets", query: createQuery({ data: null, error: null }) },
+        { table: "hd_admin_audit_logs", query: auditQuery },
+      ]),
+    });
+    await updateTicketStatus({ ticket_ref: "TK-0030", status: "in_progress" });
+    const row = (auditQuery.insert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(row.actor_id).toBeNull();
+    expect(row.actor_type).toBe("mcp");
+    expect(row.details).toMatchObject({ agent_id: "agent-456", from: "open", to: "in_progress" });
+  });
+
   it("sets closed_at when moving a ticket to closed", async () => {
     const { updateTicketStatus } = await import("../src/tools/update-ticket-status.js");
 
@@ -125,13 +193,13 @@ describe("updateTicketStatus", () => {
       const payload = (auditQuery.insert as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(payload).toEqual({
         organization_id: "org-123",
-        actor_id: "agent-456",
+        actor_id: null,
         actor_type: "mcp",
         action: "ticket.status_changed",
         target_type: "ticket",
         target_id: TICKET_UUID,
         outcome: "success",
-        details: { from: "in_progress", to: "resolved", ticket_number: 12 },
+        details: { from: "in_progress", to: "resolved", ticket_number: 12, agent_id: "agent-456" },
       });
       expect(JSON.stringify(payload)).not.toContain("Secret customer note");
     });

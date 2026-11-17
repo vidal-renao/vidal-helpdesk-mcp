@@ -47,7 +47,7 @@ From 2026-05-22 to 2026-07-22, `src/lib/audit-runs.ts` read/wrote the audit dedu
 
 ## Audit of MCP writes (Phase 1, REQ-F1-06)
 
-`update_ticket_status` records every successful status change in `hd_admin_audit_logs` (`actor_type: 'mcp'`, `action: 'ticket.status_changed'`, `details: { from, to, ticket_number }`). The row carries no free text: the optional comment is not copied into it. Because the MCP has no per-request user identity, `actor_id` is the deployment's `MCP_AGENT_ID` (or `null`) — the audit proves *that the MCP channel* made the change, not which human asked for it.
+`update_ticket_status` records every successful status change in `hd_admin_audit_logs` (`actor_type: 'mcp'`, `action: 'ticket.status_changed'`, `details: { from, to, ticket_number, agent_id }`). The row carries no free text: the optional comment is not copied into it. Because the MCP has no per-request user identity, `actor_id` is `null` and the deployment's `MCP_AGENT_ID` is stored in `details.agent_id` — the audit proves *that the MCP channel* made the change, not which human asked for it.
 
 The audit write is deliberately non-blocking: if it fails, the error **code** is logged server-side and the tool returns `audit_logged: false` alongside the real result of the status change. Operators should treat `audit_logged: false` in production as an incident (missing table, revoked grant), not as normal. The table is created by ticket-system migration `20261117` (`admin_audit_logs`) and **must exist before this server is deployed**; otherwise status changes succeed without an audit trail. Other MCP writes (`create_ticket`, `prioritize_incident`, `suggest_solution`) are not yet audited in this table.
 

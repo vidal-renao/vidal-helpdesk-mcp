@@ -4,6 +4,11 @@ Format: newest first. Entries before 2026-07-21 are reconstructed from git histo
 
 ## Unreleased — Phase 1: MCP write audit and AI-unavailable fallback (REQ-F1-06, REQ-F1-09)
 
+**Review fixes (independent review, Phase 1)**
+
+- Resolving through `update_ticket_status` now stores the resolution SLA verdict (`sla_resolution_met`, `sla_resolution_breached`, `sla_breached`) from `resolution_due_at` (falling back to `sla_resolution_due`), because the ticket-system sweep only reads active tickets (REQ-F1-03).
+- Audit rows use `actor_id: null`; the configured agent profile goes into `details.agent_id`, so a misconfigured `MCP_AGENT_ID` can no longer make the audit insert fail on the profile foreign key.
+
 > **Deploy order (blocking):** ticket-system migration `20261117` (`admin_audit_logs`), which creates `public.hd_admin_audit_logs`, must be applied to the database **before** this change is deployed. If it is not, `update_ticket_status` still changes the status but every call returns `audit_logged: false` and no audit trail is written.
 
 **Added**

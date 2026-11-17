@@ -47,7 +47,7 @@ One row per ticket (accessed as a to-one embed in every query, e.g. `ai_analysis
 | Column | Value written by the MCP |
 |---|---|
 | `organization_id` | `MCP_ORGANIZATION_ID` |
-| `actor_id` | `MCP_AGENT_ID`, or `null` if unset |
+| `actor_id` | always `null` (the MCP is not a profile); the configured `MCP_AGENT_ID` goes into `details.agent_id` |
 | `actor_type` | `'mcp'` |
 | `action` | `'ticket.status_changed'` |
 | `target_type` | `'ticket'` |

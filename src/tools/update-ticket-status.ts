@@ -39,7 +39,7 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput): Promis
 
   let query = supabase
     .from("hd_tickets")
-    .select("id,ticket_number,status,priority,title")
+    .select("id,ticket_number,status,priority,title,resolution_due_at,sla_resolution_due,sla_response_breached")
     .eq("organization_id", organizationId)
     .is("deleted_at", null);
 
@@ -50,10 +50,30 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput): Promis
 
   const ticketRef = `TK-${String(ticket.ticket_number).padStart(4, "0")}`;
   const previousStatus = ticket.status;
-  const updatePayload: { status: UpdateTicketStatusInput["status"]; resolved_at?: string; closed_at?: string } = {
+  const updatePayload: {
+    status: UpdateTicketStatusInput["status"];
+    resolved_at?: string;
+    closed_at?: string;
+    sla_resolution_met?: boolean;
+    sla_resolution_breached?: boolean;
+    sla_breached?: boolean;
+  } = {
     status: input.status,
   };
-  if (input.status === "resolved") updatePayload.resolved_at = new Date().toISOString();
+  if (input.status === "resolved") {
+    const resolvedAt = new Date();
+    updatePayload.resolved_at = resolvedAt.toISOString();
+    // REQ-F1-03: the SLA sweep only reads active tickets, so the resolution
+    // verdict must be stored now or a late resolution stays "on time" forever.
+    // Same rule as ticket-system lib/sla.ts: canonical deadline first, legacy mirror second.
+    const due = ticket.resolution_due_at ?? ticket.sla_resolution_due ?? null;
+    if (due) {
+      const breached = resolvedAt.getTime() > new Date(due).getTime();
+      updatePayload.sla_resolution_breached = breached;
+      updatePayload.sla_resolution_met = !breached;
+      updatePayload.sla_breached = breached || ticket.sla_response_breached === true;
+    }
+  }
   if (input.status === "closed") updatePayload.closed_at = new Date().toISOString();
 
   const { error: updateError } = await supabase
@@ -74,13 +94,15 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput): Promis
   try {
     const { error: auditError } = await supabase.from("hd_admin_audit_logs").insert({
       organization_id: organizationId,
-      actor_id: agentId,
+      // actor_id references hd_profiles; the MCP is not a person, so the
+      // configured agent profile goes into details instead (no FK failure).
+      actor_id: null,
       actor_type: "mcp",
       action: "ticket.status_changed",
       target_type: "ticket",
       target_id: ticket.id,
       outcome: "success",
-      details: { from: previousStatus, to: input.status, ticket_number: ticket.ticket_number },
+      details: { from: previousStatus, to: input.status, ticket_number: ticket.ticket_number, agent_id: agentId },
     });
     if (auditError) {
       console.error("[update_ticket_status] audit log failed", { ticket_id: ticket.id, code: errorCode(auditError) });
