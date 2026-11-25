@@ -274,12 +274,12 @@ HTTP `POST /mcp`. Every request carries `Authorization: Bearer
 
 | Tool | Purpose |
 |---|---|
-| `create_ticket` | Create a ticket with AI triage |
+| `create_ticket` | Create a ticket with AI triage; if AI is unavailable the ticket is still created untriaged (`ai_triage: "unavailable"`) |
 | `get_ticket_status` | Fetch ticket state and SLA metadata |
 | `list_tickets` | List tickets with status and priority filters |
 | `prioritize_incident` | Re-run AI triage and update priority when confidence allows |
 | `suggest_solution` | Generate multilingual support guidance |
-| `update_ticket_status` | Update lifecycle status and optional internal notes |
+| `update_ticket_status` | Update lifecycle status and optional internal notes; audited in `hd_admin_audit_logs` (requires ticket-system migration `20261117` applied before deploy) |
 | `generate_report` | Generate helpdesk reporting for today, week, or month |
 | `get_sla_audit_report` | Read-only snapshot of active tickets with SLA risk, resolved-window compliance, per-company breakdown, and high-priority SLA risks — the same data the daily audit email is built from |
 
