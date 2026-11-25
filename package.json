@@ -1,7 +1,7 @@
 {
   "name": "vidal-helpdesk-mcp",
   "version": "2.0.0",
-  "description": "AI-Powered IT Helpdesk MCP Server — 100% compatible with ticket-system schema. Swiss revDSG compliant.",
+  "description": "AI-Powered IT Helpdesk MCP Server — 100% compatible with ticket-system schema.",
   "type": "module",
   "main": "dist/src/index.js",
   "scripts": {
