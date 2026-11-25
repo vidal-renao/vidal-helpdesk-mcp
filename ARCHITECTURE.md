@@ -72,7 +72,7 @@ flowchart TD
 
 ## Data ownership boundary
 
-This repo reads/writes these tables but does not define or migrate them: `tickets`, `categories`, `ai_analysis`, `ticket_comments`, `organizations`, `profiles`, `customers_info`. Their shape is inferred from `src/types/index.ts` and the query call-sites — treat that as documentation of a contract, not a source of truth you can freely extend. If a query needs a column that doesn't appear to exist, that's a cross-repo change, not something to patch around here.
+This repo reads/writes these tables but does not define or migrate them: `hd_tickets`, `hd_ai_analysis`, `hd_ticket_comments`, `hd_profiles`, `hd_customers_info`, plus the unprefixed `categories` and `organizations` (and `audit_runs`, a view over `helpdesk.audit_runs`). Their shape is inferred from `src/types/index.ts` and the query call-sites — treat that as documentation of a contract, not a source of truth you can freely extend. If a query needs a column that doesn't appear to exist, that's a cross-repo change, not something to patch around here.
 
 `helpdesk.audit_runs` is the one exception: this app is its sole owner (created for this app's own delivery tracking, referenced only by this codebase). `supabase/migrations/20260722000000_audit_runs_period_idempotency.sql` documents the schema change applied on 2026-07-22 — see "Idempotency design" below for why.
 

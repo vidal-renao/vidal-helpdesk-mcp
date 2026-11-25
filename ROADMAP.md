@@ -1,6 +1,6 @@
 # ROADMAP.md
 
-Status as of 2026-07-22. Items move down this list as they're actually built — an idea in "Future" is not a promise, and nothing here should be read as already implemented unless it's in the first section.
+Status as of 2026-11-25. Items move down this list as they're actually built — an idea in "Future" is not a promise, and nothing here should be read as already implemented unless it's in the first section.
 
 ## Implemented
 
@@ -8,13 +8,12 @@ Status as of 2026-07-22. Items move down this list as they're actually built —
 - AI triage (category, priority, sentiment, language, PII flag, smart response) and multilingual solution generation via Anthropic Claude.
 - Confidence-gated priority application (>= 60%) on both ticket creation and re-prioritization.
 - Read-only SLA audit report (`get_sla_audit_report`, `src/lib/sla-audit.ts`): per-company active-ticket breakdown (company resolved via `tickets.created_by → profiles → customers_info`), three-way SLA status (compliant/at_risk/breached), VIP risks with deterministic risk reasons and required actions, ordered action items. `project_id`/`project_name` are always `null` — no ticket-to-project relationship exists in this schema (confirmed 2026-07-22).
-- Local daily SLA schedule at 06:00 UTC; the remote workflow is currently
-  `disabled_manually`. Five delivery states are supported and only `failed` is
+- Daily SLA audit via GitHub Actions (`.github/workflows/audit.yml`, scheduled 05:17 UTC; GitHub often starts it later in the day) — workflow active. Five delivery states are supported and only `failed` is
   automatically reclaimable.
 - Daily audit email redesigned: companies list, VIP risks with company/project/reference/risk/action/due-date, priority actions, explicit empty states, HTML-escaped untrusted content.
 - Mandatory MCP bearer authentication, with CORS as secondary defense.
 - Structured JSON logging on every audit event.
-- Full Vitest coverage: 66 tests across 13 files, including the idempotency claim/reclaim logic and SLA aggregation.
+- Full Vitest coverage: 185 passing tests (1 opt-in PostgreSQL integration test skipped), including the idempotency claim/reclaim logic and SLA aggregation.
 - Documentation/guardrail set: `AGENTS.md`, `ARCHITECTURE.md`, `SECURITY.md`, `DOMAIN.md`, `TESTING.md`, `DECISIONS.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `supabase/migrations/`.
 
 ## Phase 1 follow-up gates
